@@ -1,0 +1,1 @@
+..\ActFuns.Tools.Excel2Json\bin\Release\netcoreapp2.2\publish\excel2json.exe -e in.xls -j out.json -a
