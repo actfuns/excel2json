@@ -5,7 +5,7 @@
 ## 表格格式
 
 json表头(json的key)的下一行必须为数据类型, 之后的行都为数据行, 如果列为数组类型数据用’,‘分割.  
-数据类型有: string,int,float,boolen,object,array\<T\>   
+数据类型有: string,int,float,date,boolen,object,array\<T\>   
 
 ## 命令行参数
 

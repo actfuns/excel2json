@@ -83,7 +83,7 @@ namespace ActFuns.Tools.Excel2Json
                 case "boolean":
                     value = Convert.ToBoolean(data);
                     break;
-                case "data":
+                case "date":
                     value = Convert.ToDateTime(data);
                     break;
                 case "object":
