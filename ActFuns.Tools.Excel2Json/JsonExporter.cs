@@ -75,7 +75,7 @@ namespace ActFuns.Tools.Excel2Json
             switch (type)
             {
                 case "int":
-                    value = Convert.ToInt32(data);
+                    value = Convert.ToInt64(data);
                     break;
                 case "float":
                     value = Convert.ToDouble(data);
