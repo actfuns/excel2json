@@ -19,6 +19,11 @@ namespace ActFuns.Tools.Excel2Json
         private Regex _regArray = new Regex(@"array\<(?<type>\w+)\>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
+        /// regArrayItem
+        /// </summary>
+        private Regex _regArrayItem = new Regex(@"(?<text>.+?)((?<!\\),|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>
         /// data
         /// </summary>
         private List<Dictionary<string, object>> _data;
@@ -47,8 +52,9 @@ namespace ActFuns.Tools.Excel2Json
                         string sdata = data == null ? string.Empty : data.ToString();
                         string atype = _regArray.Match(type).Groups["type"].Value;
                         List<object> avalue = new List<object>();
-                        foreach (var str in sdata.Split(","))
+                        foreach (Match match in _regArrayItem.Matches(sdata))
                         {
+                            string str = match.Groups["text"].Value.Replace(@"\,", ",");
                             avalue.Add(convert(str, atype));
                         }
                         value = avalue;
