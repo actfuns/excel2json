@@ -44,31 +44,31 @@ func LoadExcel(filePath string, headerRow int) ([]Sheet, error) {
 			continue
 		}
 
-		// clamp to valid range
-		hRows := headerRow
-		if hRows < 1 {
-			hRows = 1
-		}
-		if hRows > len(rows) {
-			hRows = len(rows)
-		}
-
-		// build column names: iterate top rows and use the first non-empty cell per column
+		// build column names from the first row only — matches C# ExcelDataReader UseHeaderRow=true
 		headers := make([]string, maxCols)
 		for i := range headers {
 			headers[i] = fmt.Sprintf("col_%d", i)
 		}
-		for ri := 0; ri < hRows; ri++ {
-			for ci, val := range rows[ri] {
+		if len(rows) > 0 {
+			for ci, val := range rows[0] {
 				if v := strings.TrimSpace(val); v != "" && ci < len(headers) {
 					headers[ci] = v
 				}
 			}
 		}
 
-		// data rows — pad each to maxCols so all rows have equal length
-		dataRows := make([][]string, 0, len(rows)-hRows)
-		for ri := hRows; ri < len(rows); ri++ {
+		// data rows start from headerRow (0-indexed).
+		// Rows 1..headerRow-1 are skipped (extra header info, e.g. Chinese descriptions).
+		dataStart := headerRow
+		if dataStart < 1 {
+			dataStart = 1
+		}
+		if dataStart > len(rows) {
+			dataStart = len(rows)
+		}
+
+		dataRows := make([][]string, 0, len(rows)-dataStart)
+		for ri := dataStart; ri < len(rows); ri++ {
 			row := rows[ri]
 			padded := make([]string, maxCols)
 			copy(padded, row)

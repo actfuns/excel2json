@@ -128,25 +128,19 @@ func run(files []string, opts Options) error {
 				}
 
 			case "csv":
+				path := target
 				if targetIsDir {
-					if err := exportCSV(sheets, opts, target); err != nil {
-						if toStdout {
-							stdoutMu.Unlock()
-						}
-						return fmt.Errorf("%s: %w", f, err)
+					os.MkdirAll(target, 0755)
+					path = filepath.Join(target, fileStem(f)+".csv")
+				}
+				if err := exportCSV(sheets, opts, path); err != nil {
+					if toStdout {
+						stdoutMu.Unlock()
 					}
-					dir := strings.TrimRight(target, "/\\")
-					lines = append(lines, dir+"/")
-				} else {
-					if err := exportCSV(sheets, opts, target); err != nil {
-						if toStdout {
-							stdoutMu.Unlock()
-						}
-						return fmt.Errorf("%s: %w", f, err)
-					}
-					if target != "" {
-						lines = append(lines, target)
-					}
+					return fmt.Errorf("%s: %w", f, err)
+				}
+				if path != "" {
+					lines = append(lines, path)
 				}
 
 			default:
