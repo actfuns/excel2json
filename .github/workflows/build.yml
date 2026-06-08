@@ -39,4 +39,4 @@ jobs:
         run: |
           bin="excel2json${{ matrix.os == 'windows-latest' && '.exe' || '' }}"
           test -f "$bin" || { echo "Binary not found: $bin"; exit 1; }
-          "$bin" --help
+          "./$bin" --help
