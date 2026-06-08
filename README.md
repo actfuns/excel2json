@@ -1,5 +1,7 @@
 # excel2json
 
+> **中文文档请见 [README_zh.md](README_zh.md)**
+
 Convert Excel (`.xls`/`.xlsx`) files to **JSON** and **CSV**.
 
 A Go port of the [excel2json](https://github.com/neil3d/excel2json) C# tool with additional CSV export support.

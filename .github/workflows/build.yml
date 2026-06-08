@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Tidy
+        run: go mod tidy
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        shell: bash
+        run: go build -o excel2json${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          bin="excel2json${{ matrix.os == 'windows-latest' && '.exe' || '' }}"
+          test -f "$bin" || { echo "Binary not found: $bin"; exit 1; }
+          "$bin" --help

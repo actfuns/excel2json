@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            asset-name: excel2json-linux-amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            asset-name: excel2json-linux-arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            asset-name: excel2json-windows-amd64
+            binary-suffix: .exe
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            asset-name: excel2json-darwin-amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            asset-name: excel2json-darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Build
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          suffix="${{ matrix.binary-suffix || '' }}"
+          go build -o excel2json${suffix} .
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          suffix="${{ matrix.binary-suffix || '' }}"
+          bin="./excel2json${suffix}"
+          test -f "$bin" || { echo "Binary not found: $bin"; exit 1; }
+          "$bin" --help
+
+      - name: Package
+        shell: bash
+        run: |
+          name="${{ matrix.asset-name }}"
+          mkdir -p package
+          cp LICENSE README.md README_zh.md package/ 2>/dev/null || true
+          suffix="${{ matrix.binary-suffix || '' }}"
+          cp "excel2json${suffix}" package/
+          cd package
+          if command -v zip &>/dev/null; then
+            zip -r "../${name}.zip" .
+          else
+            7z a -tzip "../${name}.zip" .
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset-name }}
+          path: ${{ matrix.asset-name }}.zip
+
+  create-release:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"
+          generate_release_notes: true
