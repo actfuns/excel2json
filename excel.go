@@ -44,7 +44,7 @@ func LoadExcel(filePath string, headerRow int) ([]Sheet, error) {
 			continue
 		}
 
-		// build column names from the first row only — matches C# ExcelDataReader UseHeaderRow=true
+		// build column names from the first row only
 		headers := make([]string, maxCols)
 		for i := range headers {
 			headers[i] = fmt.Sprintf("col_%d", i)

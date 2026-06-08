@@ -138,15 +138,11 @@ func (e *Exporter) toDict(sheet Sheet) map[string]any {
 }
 
 // convertCell applies all transformations to a raw cell string.
-// Order matches C# excel2json: cell_json → empty/default → double→int → all_string.
 func (e *Exporter) convertCell(sheet Sheet, colIdx int, cell string) any {
 	// Trim spaces — excelize returns raw strings including accidental spaces.
-	// Matches C# ExcelDataReader which coerces space-only cells to DBNull for
-	// typed columns, then getColumnDefault returns the numeric zero.
 	cell = strings.TrimSpace(cell)
 
 	// cell_json: try to deserialize JSON objects / arrays in-place
-	// (checked before empty/default, matching C# — DBNull.ToString() is "" so no-op)
 	if e.opts.CellJSON {
 		if cell != "" && (cell[0] == '{' || cell[0] == '[') {
 			var parsed any
@@ -203,7 +199,7 @@ func (e *Exporter) columnDefault(sheet Sheet, colIdx int) any {
 		if val == "" {
 			continue
 		}
-		// Detect column type from first non-empty value (same as C# getColumnDefault).
+		// Detect column type from first non-empty value.
 		if _, err := strconv.ParseFloat(val, 64); err == nil {
 			result = int64(0)
 			break
