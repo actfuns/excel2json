@@ -140,6 +140,11 @@ func (e *Exporter) toDict(sheet Sheet) map[string]any {
 // convertCell applies all transformations to a raw cell string:
 // empty→default → cell_json → number parsing (strip .0) → all_string → raw.
 func (e *Exporter) convertCell(sheet Sheet, colIdx int, cell string) any {
+	// Trim spaces — excelize returns raw strings including accidental spaces.
+	// Matches C# ExcelDataReader which coerces space-only cells to DBNull for
+	// typed columns, then getColumnDefault returns the numeric zero.
+	cell = strings.TrimSpace(cell)
+
 	if e.opts.AllString {
 		return cell
 	}
@@ -150,10 +155,9 @@ func (e *Exporter) convertCell(sheet Sheet, colIdx int, cell string) any {
 
 	// cell_json: try to deserialize JSON objects / arrays in-place
 	if e.opts.CellJSON {
-		t := strings.TrimSpace(cell)
-		if t != "" && (t[0] == '{' || t[0] == '[') {
+		if cell[0] == '{' || cell[0] == '[' {
 			var parsed any
-			if json.Unmarshal([]byte(t), &parsed) == nil && parsed != nil {
+			if json.Unmarshal([]byte(cell), &parsed) == nil && parsed != nil {
 				return parsed
 			}
 		}

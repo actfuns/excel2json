@@ -109,7 +109,7 @@ func writeCSV(w io.Writer, sheet Sheet, exp *Exporter) error {
 		for i, c := range cols {
 			cell := ""
 			if c.Index < len(row) {
-				cell = row[c.Index]
+				cell = strings.TrimSpace(row[c.Index])
 			}
 			if cell == "" {
 				rec[i] = fmt.Sprintf("%v", exp.columnDefault(sheet, c.Index))
