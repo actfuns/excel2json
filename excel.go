@@ -11,9 +11,17 @@ import (
 // The first headerRow rows of each sheet are treated as column names;
 // subsequent rows become data rows.
 func LoadExcel(filePath string, headerRow int) ([]Sheet, error) {
-	f, err := excelize.OpenFile(filePath)
+	// Open file with shared access (like C#'s FileShare.ReadWrite),
+	// so Excel can keep the file open while we read it.
+	raw, err := openFileShared(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("open excel file: %w", err)
+	}
+	defer raw.Close()
+
+	f, err := excelize.OpenReader(raw, excelize.Options{RawCellValue: true})
+	if err != nil {
+		return nil, fmt.Errorf("read excel file: %w", err)
 	}
 	defer f.Close()
 
