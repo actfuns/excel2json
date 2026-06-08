@@ -25,7 +25,7 @@ func LoadExcel(filePath string, headerRow int) ([]Sheet, error) {
 	var sheets []Sheet
 
 	for _, name := range names {
-		rows, err := f.GetRows(name)
+		rows, err := f.GetRows(name, excelize.Options{RawCellValue: true})
 		if err != nil {
 			return nil, fmt.Errorf("read sheet [%s]: %w", name, err)
 		}
