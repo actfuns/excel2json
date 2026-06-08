@@ -58,7 +58,12 @@ jobs:
           suffix="${{ matrix.binary-suffix || '' }}"
           bin="./excel2json${suffix}"
           test -f "$bin" || { echo "Binary not found: $bin"; exit 1; }
-          "$bin" --help
+          # Only smoke-test if built for the native platform (skip cross-compiled builds)
+          if [ "$GOOS" = "$(go env GOHOSTOS)" ] && [ "$GOARCH" = "$(go env GOHOSTARCH)" ]; then
+            "$bin" --help
+          else
+            echo "Skipping smoke test for cross-compiled binary ($GOOS/$GOARCH on $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
+          fi
 
       - name: Package
         shell: bash
