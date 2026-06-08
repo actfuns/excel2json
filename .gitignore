@@ -1,0 +1,21 @@
+# Binary
+excel2json
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp
+tmp/
+/tmp
+
+# Go
+go.work
+go.work.sum
+
+# OS
+.DS_Store
+Thumbs.db
