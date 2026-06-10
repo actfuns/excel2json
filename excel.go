@@ -8,9 +8,10 @@ import (
 )
 
 // LoadExcel opens an Excel file and parses every sheet.
-// The first headerRow rows of each sheet are treated as column names;
-// subsequent rows become data rows.
-func LoadExcel(filePath string, headerRow int) ([]Sheet, error) {
+// nameRow specifies which row contains column names (0-based).
+// typeRow specifies which row contains type annotations (-1 to disable).
+// dataStart = nameRow + headerSkip.
+func LoadExcel(filePath string, opts Options) ([]Sheet, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("open excel file: %w", err)
@@ -22,12 +23,16 @@ func LoadExcel(filePath string, headerRow int) ([]Sheet, error) {
 		return nil, fmt.Errorf("excel file is empty: %s", filePath)
 	}
 
+	nameRow := opts.NameRow
+	typeRow := opts.TypeRow
+	header := opts.HeaderRows
+
 	var sheets []Sheet
 
-	for _, name := range names {
-		rows, err := f.GetRows(name, excelize.Options{RawCellValue: true})
+	for _, sheetName := range names {
+		rows, err := f.GetRows(sheetName, excelize.Options{RawCellValue: true})
 		if err != nil {
-			return nil, fmt.Errorf("read sheet [%s]: %w", name, err)
+			return nil, fmt.Errorf("read sheet [%s]: %w", sheetName, err)
 		}
 		if len(rows) == 0 {
 			continue
@@ -44,24 +49,42 @@ func LoadExcel(filePath string, headerRow int) ([]Sheet, error) {
 			continue
 		}
 
-		// build column names from the first row only
+		// --- column names from nameRow ---
 		headers := make([]string, maxCols)
 		for i := range headers {
 			headers[i] = fmt.Sprintf("col_%d", i)
 		}
-		if len(rows) > 0 {
-			for ci, val := range rows[0] {
+		if nameRow >= 0 && nameRow < len(rows) {
+			for ci, val := range rows[nameRow] {
 				if v := strings.TrimSpace(val); v != "" && ci < len(headers) {
 					headers[ci] = v
 				}
 			}
 		}
 
-		// data rows start from headerRow (0-indexed).
-		// Rows 1..headerRow-1 are skipped (extra header info, e.g. Chinese descriptions).
-		dataStart := headerRow
-		if dataStart < 1 {
-			dataStart = 1
+		// --- type annotations from typeRow ---
+		types := make([]string, maxCols)
+		hasTypes := typeRow >= 0 && typeRow < len(rows) && typeRow > nameRow
+		if hasTypes {
+			for ci, val := range rows[typeRow] {
+				if v := strings.TrimSpace(val); v != "" && ci < len(types) {
+					types[ci] = strings.ToLower(v)
+				}
+			}
+		}
+
+		// --- data rows ---
+		dataStart := header
+		if dataStart <= nameRow {
+			return nil, fmt.Errorf("sheet [%s]: --header=%d must be greater than --name-row=%d",
+				sheetName, header, nameRow)
+		}
+		if hasTypes && dataStart <= typeRow {
+			return nil, fmt.Errorf("sheet [%s]: --header=%d must be greater than --type-row=%d",
+				sheetName, header, typeRow)
+		}
+		if dataStart < 0 {
+			dataStart = 0
 		}
 		if dataStart > len(rows) {
 			dataStart = len(rows)
@@ -76,8 +99,9 @@ func LoadExcel(filePath string, headerRow int) ([]Sheet, error) {
 		}
 
 		sheets = append(sheets, Sheet{
-			Name:    name,
+			Name:    sheetName,
 			Headers: headers,
+			Types:   types,
 			Rows:    dataRows,
 		})
 	}

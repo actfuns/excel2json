@@ -55,7 +55,9 @@ func init() {
 	rootCmd.Flags().StringVar(&opts.Format, "format", "json", "output format: json or csv")
 
 	// Data parsing
-	rootCmd.Flags().IntVar(&opts.HeaderRows, "header", 1, "number of header rows")
+	rootCmd.Flags().IntVar(&opts.NameRow, "name-row", 0, "row index (0-based) for column names")
+	rootCmd.Flags().IntVar(&opts.TypeRow, "type-row", -1, "row index (0-based) for type annotations (-1 to disable)")
+	rootCmd.Flags().IntVar(&opts.HeaderRows, "header", 1, "total header rows before data (must be > name-row and > type-row)")
 	rootCmd.Flags().StringVarP(&opts.Encoding, "encoding", "c", "utf8-nobom", "output file encoding")
 	rootCmd.Flags().StringVarP(&opts.DateFormat, "date", "d", "yyyy/MM/dd", "date format string")
 
@@ -96,7 +98,7 @@ func run(files []string, opts Options) error {
 			default:
 			}
 
-			sheets, err := LoadExcel(f, opts.HeaderRows)
+			sheets, err := LoadExcel(f, opts)
 			if err != nil {
 				return fmt.Errorf("%s: %w", f, err)
 			}

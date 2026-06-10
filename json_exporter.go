@@ -19,13 +19,21 @@ func ExportJSON(sheets []Sheet, opts Options) (string, error) {
 
 	// single sheet & no ForceSheetName → output raw
 	if !opts.ForceSheetName && len(valid) == 1 {
-		return serializeJSON(exp.ConvertSheet(valid[0]), opts.Pretty)
+		v, err := exp.ConvertSheet(valid[0])
+		if err != nil {
+			return "", err
+		}
+		return serializeJSON(v, opts.Pretty)
 	}
 
 	// multiple sheets or ForceSheetName → wrap by sheet name
 	data := make(map[string]any, len(valid))
 	for _, s := range valid {
-		data[s.Name] = exp.ConvertSheet(s)
+		v, err := exp.ConvertSheet(s)
+		if err != nil {
+			return "", fmt.Errorf("sheet [%s]: %w", s.Name, err)
+		}
+		data[s.Name] = v
 	}
 	return serializeJSON(data, opts.Pretty)
 }

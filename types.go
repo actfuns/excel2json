@@ -5,13 +5,46 @@ import (
 	"strings"
 )
 
+// Supported type annotations for the type row feature.
+const (
+	TypeInt    = "int"
+	TypeFloat  = "float"
+	TypeBool   = "bool"
+	TypeString = "string"
+	TypeDate   = "date"
+	TypeAny    = "any"
+	TypeObject = "object"
+	TypeList   = "list"
+)
+
+// typeDefault returns the zero/null default value for a given type annotation.
+// When a typed cell is empty, this value is emitted instead of omitting the field.
+func typeDefault(colType string) any {
+	switch colType {
+	case TypeInt:
+		return int64(0)
+	case TypeFloat:
+		return float64(0)
+	case TypeBool:
+		return false
+	case TypeString, TypeDate:
+		return ""
+	case TypeAny, TypeObject, TypeList:
+		return nil
+	default:
+		return ""
+	}
+}
+
 // Options maps CLI flags.
 type Options struct {
 	// Input / output
 	OutputPath string // -o --out  output path (file for single input, dir for multiple)
 
 	// Data parsing
-	HeaderRows int    // --header       number of header rows, default 1
+	NameRow    int    // --name-row     row index for column names (0-based), default 0
+	TypeRow    int    // --type-row     row index for column types (0-based), -1 to disable
+	HeaderRows int    // --header       #header rows between name row and data; also implies dataStart = header
 	Encoding   string // -c --encoding  output encoding, default utf8-nobom
 	DateFormat string // -d --date      date format, default yyyy/MM/dd
 
@@ -32,7 +65,8 @@ type Options struct {
 type Sheet struct {
 	Name    string
 	Headers []string   // column names from the header rows
-	Rows    [][]string // data rows (header rows excluded)
+	Types   []string   // column type annotations (empty if no type row)
+	Rows    [][]string // data rows
 }
 
 // fileStem returns the filename without extension.
