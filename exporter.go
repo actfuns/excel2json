@@ -9,15 +9,13 @@ import (
 )
 
 // Exporter is the core conversion engine shared by JSON and CSV exporters.
-// It holds Options and a column-default-value cache to avoid parameter threading.
 type Exporter struct {
-	opts  Options
-	cache map[string]any
+	opts Options
 }
 
 // NewExporter returns an Exporter ready for use.
 func NewExporter(opts Options) *Exporter {
-	return &Exporter{opts: opts, cache: make(map[string]any)}
+	return &Exporter{opts: opts}
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +57,12 @@ func (e *Exporter) ConvertRow(sheet Sheet, row []string) map[string]any {
 
 		cell := ""
 		if ci < len(row) {
-			cell = row[ci]
+			cell = strings.TrimSpace(row[ci])
+		}
+
+		// skip empty cells — omit the field entirely
+		if cell == "" {
+			continue
 		}
 
 		val := e.convertCell(sheet, ci, cell)
@@ -139,9 +142,6 @@ func (e *Exporter) toDict(sheet Sheet) map[string]any {
 
 // convertCell applies all transformations to a raw cell string.
 func (e *Exporter) convertCell(sheet Sheet, colIdx int, cell string) any {
-	// Trim spaces — excelize returns raw strings including accidental spaces.
-	cell = strings.TrimSpace(cell)
-
 	// cell_json: try to deserialize JSON objects / arrays in-place
 	if e.opts.CellJSON {
 		if cell != "" && (cell[0] == '{' || cell[0] == '[') {
@@ -155,15 +155,6 @@ func (e *Exporter) convertCell(sheet Sheet, colIdx int, cell string) any {
 				return parsed
 			}
 		}
-	}
-
-	// empty → column default
-	if cell == "" {
-		val := e.columnDefault(sheet, colIdx)
-		if e.opts.AllString {
-			return fmt.Sprintf("%v", val)
-		}
-		return val
 	}
 
 	// number parsing: 3.0 → 3 (strip redundant .0), then all_string
@@ -181,33 +172,4 @@ func (e *Exporter) convertCell(sheet Sheet, colIdx int, cell string) any {
 	}
 
 	return cell
-}
-
-// columnDefault returns a zero-value for an empty cell by inspecting the first non-empty cell in the same column.
-func (e *Exporter) columnDefault(sheet Sheet, colIdx int) any {
-	key := sheet.Name + "@" + sheet.Headers[colIdx]
-	if v, ok := e.cache[key]; ok {
-		return v
-	}
-
-	result := any("")
-	for _, row := range sheet.Rows {
-		if colIdx >= len(row) {
-			continue
-		}
-		val := strings.TrimSpace(row[colIdx])
-		if val == "" {
-			continue
-		}
-		// Detect column type from first non-empty value.
-		if _, err := strconv.ParseFloat(val, 64); err == nil {
-			result = int64(0)
-			break
-		}
-		result = ""
-		break
-	}
-
-	e.cache[key] = result
-	return result
 }

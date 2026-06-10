@@ -104,7 +104,7 @@ func run(files []string, opts Options) error {
 			target, targetIsDir := resolveTarget(multi, opts)
 			var lines []string
 
-			// stdout 输出需要串行化
+			// stdout output must be serialized
 			toStdout := target == ""
 			if toStdout {
 				stdoutMu.Lock()

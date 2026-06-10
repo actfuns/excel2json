@@ -111,11 +111,7 @@ func writeCSV(w io.Writer, sheet Sheet, exp *Exporter) error {
 			if c.Index < len(row) {
 				cell = strings.TrimSpace(row[c.Index])
 			}
-			if cell == "" {
-				rec[i] = fmt.Sprintf("%v", exp.columnDefault(sheet, c.Index))
-			} else {
-				rec[i] = cell
-			}
+			rec[i] = cell
 		}
 		if err := cw.Write(rec); err != nil {
 			return fmt.Errorf("write row: %w", err)
