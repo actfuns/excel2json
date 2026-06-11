@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Exporter is the core conversion engine shared by JSON and CSV exporters.
@@ -189,7 +190,7 @@ func (e *Exporter) convertCell(colType, cell string) (any, error) {
 			return v, nil
 
 		case TypeDate:
-			return cell, nil
+			return e.convertDate(cell)
 
 		case TypeAny:
 			return e.legacyConvert(cell)
@@ -261,4 +262,154 @@ func (e *Exporter) legacyConvert(cell string) (any, error) {
 	}
 
 	return cell, nil
+}
+
+// dateValue wraps a time.Time with the configured format so that MarshalJSON
+// produces the desired date string. This pushes formatting to the serialization
+// layer, analogous to C#'s JsonSerializerSettings.DateFormatString.
+type dateValue struct {
+	t      time.Time
+	format string
+}
+
+func (d dateValue) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.t.Format(d.format))
+}
+
+// convertDate converts a raw cell value (expected to be an Excel date serial number
+// or a parseable date string) into a dateValue that formats itself during JSON encoding.
+func (e *Exporter) convertDate(cell string) (any, error) {
+	layout := excelDateFormatToGo(e.opts.DateFormat)
+	trimmed := strings.TrimSpace(cell)
+
+	// 1) Try integer Excel serial number (e.g. "45341")
+	if serial, err := strconv.ParseInt(trimmed, 10, 64); err == nil && serial >= 1 {
+		return dateValue{t: excelSerialToTime(serial), format: layout}, nil
+	}
+
+	// 2) Try float Excel serial number (e.g. "45341.5" for date+time)
+	if f, err := strconv.ParseFloat(trimmed, 64); err == nil && f >= 1 {
+		return dateValue{t: excelSerialToFloatTime(f), format: layout}, nil
+	}
+
+	// 3) Try common date string layouts
+	commonLayouts := []string{
+		"2006-01-02",
+		"2006/01/02",
+		"01/02/2006",
+		"1/2/2006",
+		"2006-01-02 15:04:05",
+		"2006/01/02 15:04:05",
+		time.RFC3339,
+	}
+	for _, try := range commonLayouts {
+		if t, err := time.Parse(try, trimmed); err == nil {
+			return dateValue{t: t, format: layout}, nil
+		}
+	}
+
+	// 4) Fallback: return as-is (will become a JSON string)
+	return trimmed, nil
+}
+
+// excelSerialToTime converts an integer Excel date serial number to time.Time.
+// Excel serial number 1 = January 1, 1900.
+// Due to the Lotus 123 bug, serial day 60 = Feb 29, 1900 (which never existed).
+func excelSerialToTime(serial int64) time.Time {
+	if serial >= 61 {
+		serial-- // compensate for Lotus 123 leap-year bug
+	}
+	return time.Date(1899, 12, 30, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(serial))
+}
+
+// excelSerialToFloatTime converts a float Excel serial number to time.Time,
+// preserving the fractional (time-of-day) component.
+func excelSerialToFloatTime(serial float64) time.Time {
+	whole := int64(serial)
+	frac := serial - float64(whole)
+	t := excelSerialToTime(whole)
+	// frac is fraction of a day
+	nanos := int64(frac * 86400 * 1e9)
+	return t.Add(time.Duration(nanos))
+}
+
+// excelDateFormatToGo converts an Excel-style date format string to a Go time.Format layout.
+// Examples:
+//
+//	yyyy/MM/dd  → 2006/01/02
+//	yyyy-MM-dd  → 2006-01-02
+//	MM/dd/yyyy  → 01/02/2006
+//	yyyy-MM-dd HH:mm:ss → 2006-01-02 15:04:05
+func excelDateFormatToGo(format string) string {
+	// If it's already a Go-style layout (contains "2006" or "01" or "02"), use as-is.
+	if strings.Contains(format, "2006") || strings.Contains(format, "01") || strings.Contains(format, "02") {
+		return format
+	}
+
+	var buf strings.Builder
+	i := 0
+	for i < len(format) {
+		// collect a run of letter characters
+		start := i
+		for i < len(format) && isDateLetter(format[i]) {
+			i++
+		}
+		if i > start {
+			buf.WriteString(replaceDateToken(format[start:i]))
+		}
+		if i < len(format) {
+			buf.WriteByte(format[i])
+			i++
+		}
+	}
+	return buf.String()
+}
+
+func isDateLetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func replaceDateToken(token string) string {
+	switch token {
+	case "yyyy":
+		return "2006"
+	case "yy":
+		return "06"
+	case "MMMM":
+		return "January"
+	case "MMM":
+		return "Jan"
+	case "MM":
+		return "01"
+	case "M":
+		return "1"
+	case "dddd":
+		return "Monday"
+	case "ddd":
+		return "Mon"
+	case "dd":
+		return "02"
+	case "d":
+		return "2"
+	case "HH":
+		return "15"
+	case "H":
+		return "15"
+	case "hh":
+		return "03"
+	case "h":
+		return "3"
+	case "mm":
+		return "04"
+	case "m":
+		return "4"
+	case "ss":
+		return "05"
+	case "s":
+		return "5"
+	case "tt", "TT", "AM/PM", "am/pm":
+		return "PM"
+	default:
+		return token
+	}
 }

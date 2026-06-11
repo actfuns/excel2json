@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
@@ -38,13 +37,10 @@ Output routing (determined by -o and input count):
 	RunE: func(cmd *cobra.Command, args []string) error {
 		files := expandInputs(args)
 
-		start := time.Now()
-
 		if err := run(files, opts); err != nil {
 			return err
 		}
 
-		fmt.Printf("Conversion complete in [%dms].\n", time.Since(start).Milliseconds())
 		return nil
 	},
 }

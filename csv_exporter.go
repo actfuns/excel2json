@@ -155,6 +155,8 @@ func formatCell(v any) string {
 		return strconv.FormatFloat(val, 'f', -1, 64)
 	case string:
 		return val
+	case dateValue:
+		return val.t.Format(val.format)
 	default:
 		// object, list, or any other complex type → JSON
 		b, err := json.Marshal(val)
