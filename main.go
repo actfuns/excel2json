@@ -14,13 +14,15 @@ import (
 )
 
 var (
+	version  = "v0.1.5" // overridden by -ldflags
 	opts     Options
-	stdoutMu sync.Mutex // guards stdout output across concurrent goroutines
+	stdoutMu sync.Mutex
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "excel2json [options] <inputs...>",
-	Short: "Convert Excel (.xls/.xlsx) to JSON / CSV",
+	Use:     "excel2json [options] <inputs...>",
+	Short:   "Convert Excel (.xls/.xlsx) to JSON / CSV",
+	Version: version,
 	Long: `excel2json — Excel to JSON/CSV converter.
 
 Reads one or more Excel files (or directories of .xls/.xlsx files)
