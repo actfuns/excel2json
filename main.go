@@ -69,6 +69,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&opts.ExportArray, "array", "a", false, "export as array (default: dict keyed by first column)")
 	rootCmd.Flags().BoolVarP(&opts.ForceSheetName, "sheet", "s", false, "force sheet-name wrapping even for single sheet")
 	rootCmd.Flags().BoolVar(&opts.Pretty, "pretty", false, "pretty-print JSON with tab indentation")
+	rootCmd.Flags().StringVar(&opts.KeyColumn, "key-col", "", "column name to use as dict key (default: first column)")
 }
 
 func main() {

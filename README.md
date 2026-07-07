@@ -68,6 +68,7 @@ excel2json ./data/ -o ./output/
 | `-c`, `--encoding` | `utf8-nobom` | Output file encoding |
 | `-l`, `--lowcase` | `false` | Convert field names to lowercase |
 | `-a`, `--array` | `false` | Export as array (default: dict keyed by first column) |
+| `--key-col` | `""` | Column name to use as dict key (default: first column) |
 | `-d`, `--date` | `yyyy/MM/dd` | Date format string |
 | `-s`, `--sheet` | `false` | Force sheet-name wrapping even for single sheet |
 | `-x`, `--exclude_prefix` | `""` | Skip sheets/columns starting with this prefix |
@@ -139,6 +140,7 @@ Use `-s` to force wrapping even for a single sheet.
 - **Field name lowercasing**: `--lowcase` for case-insensitive consumers
 - **Exclude prefix**: skip entire sheets or columns whose name starts with a prefix (`-x`)
 - **Number de-dotting**: `88.0` → `88`, `3.14` → `3.14`
+- **Floating-point precision fix**: values like `15699.999999999998` (Excel internal rounding) are auto-rounded to `15700`
 - **Empty-cell defaults**: the first non-empty value in a column determines the default (`0` for numbers, `""` for strings)
 - **Encoding**: UTF-8 without BOM (default)
 

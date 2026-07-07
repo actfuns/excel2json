@@ -58,6 +58,7 @@ type Options struct {
 	Format         string // --format  json (default) or csv
 	ExportArray    bool   // -a --array     export as array (default: dict keyed by first column)
 	ForceSheetName bool   // -s --sheet     wrap output in sheet name even for single sheet
+	KeyColumn      string // --key-col     column name to use as dict key (default: first column)
 	Pretty         bool   // --pretty       pretty-print JSON with tab indentation
 }
 

@@ -140,18 +140,36 @@ func (e *Exporter) toArray(sheet Sheet) ([]any, error) {
 
 // toDict produces map[string]any keyed by the first column's value.
 func (e *Exporter) toDict(sheet Sheet) (map[string]any, error) {
+	// Determine key column: --key flag overrides the default (first column).
+	keyName := ""
+	if e.opts.KeyColumn != "" {
+		keyName = e.opts.KeyColumn
+		if e.opts.Lowcase {
+			keyName = strings.ToLower(keyName)
+		}
+	} else if len(sheet.Headers) > 0 {
+		keyName = sheet.Headers[0]
+		if e.opts.Lowcase {
+			keyName = strings.ToLower(keyName)
+		}
+		if e.isExcluded(keyName) {
+			keyName = ""
+		}
+	}
+
 	out := make(map[string]any, len(sheet.Rows))
 	for ri, row := range sheet.Rows {
-		id := ""
-		if len(row) > 0 {
-			id = strings.TrimSpace(row[0])
-		}
-		if id == "" {
-			id = fmt.Sprintf("row_%d", ri)
-		}
 		m, err := e.ConvertRow(sheet, ri, row)
 		if err != nil {
 			return nil, err
+		}
+		// Use the first column's converted value as the key, so it's consistent
+		// with the value inside the row (handles floating-point cleanup naturally).
+		id := fmt.Sprintf("row_%d", ri)
+		if keyName != "" {
+			if v, ok := m[keyName]; ok {
+				id = fmt.Sprintf("%v", v)
+			}
 		}
 		out[id] = m
 	}
@@ -249,7 +267,9 @@ func (e *Exporter) legacyConvert(cell string) (any, error) {
 
 	// number parsing: 3.0 → 3 (strip redundant .0), then all_string
 	if f, err := strconv.ParseFloat(cell, 64); err == nil {
-		if i := int64(f); f == float64(i) && !math.IsInf(f, 0) {
+		// Use epsilon tolerance to catch floating-point imprecision
+		// (e.g. Excel may store 15700 as 15699.999999999998 internally).
+		if i := int64(math.Round(f)); math.Abs(f-float64(i)) < 1e-9 && !math.IsInf(f, 0) {
 			if e.opts.AllString {
 				return strconv.FormatInt(i, 10), nil
 			}
