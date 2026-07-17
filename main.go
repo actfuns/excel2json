@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	version  = "v0.1.6" // overridden by -ldflags
+	version  = "v0.1.7" // overridden by -ldflags
 	opts     Options
 	stdoutMu sync.Mutex
 )
