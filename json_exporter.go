@@ -7,8 +7,8 @@ import (
 )
 
 // ExportJSON serialises one or more sheets to a JSON string.
-// - Single sheet (no ForceSheetName): output is the raw array/object.
-// - Multiple sheets or ForceSheetName: output is {"SheetName": <value>, ...}.
+// - Single sheet: output is the raw array/object.
+// - Multiple sheets: output is {"SheetName": <value>, ...}.
 func ExportJSON(sheets []Sheet, opts Options) (string, error) {
 	exp := NewExporter(opts)
 	valid := exp.FilterSheets(sheets)
@@ -17,8 +17,7 @@ func ExportJSON(sheets []Sheet, opts Options) (string, error) {
 		return "", fmt.Errorf("no valid sheets to export")
 	}
 
-	// single sheet & no ForceSheetName → output raw
-	if !opts.ForceSheetName && len(valid) == 1 {
+	if len(valid) == 1 {
 		v, err := exp.ConvertSheet(valid[0])
 		if err != nil {
 			return "", err
@@ -26,7 +25,7 @@ func ExportJSON(sheets []Sheet, opts Options) (string, error) {
 		return serializeJSON(v, opts.Pretty)
 	}
 
-	// multiple sheets or ForceSheetName → wrap by sheet name
+	// multiple sheets → wrap by sheet name
 	data := make(map[string]any, len(valid))
 	for _, s := range valid {
 		v, err := exp.ConvertSheet(s)

@@ -6,7 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/extrame/xls"
+	"github.com/pbnjay/grate"
+	_ "github.com/pbnjay/grate/xls"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -17,7 +18,7 @@ type rawSheet struct {
 }
 
 // readExcelRows detects file format and returns raw sheet data.
-// Supports both .xlsx (OOXML) and .xls (BIFF) formats.
+// .xlsx → excelize (for true OOXML),  .xls → grate (for BIFF/WPS).
 func readExcelRows(filePath string) ([]rawSheet, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -31,13 +32,17 @@ func readExcelRows(filePath string) ([]rawSheet, error) {
 	}
 	f.Close()
 
-	// OLE2/CFB identifier → old .xls (BIFF) format
+	// True OOXML (.xlsx) — use excelize
+	if bytes.HasPrefix(magic, []byte{'P', 'K', 0x03, 0x04}) {
+		return readXLSX(filePath)
+	}
+
+	// OLE2/CFB (.xls / WPS) — use grate
 	if bytes.HasPrefix(magic, []byte{0xd0, 0xcf, 0x11, 0xe0}) {
 		return readXLS(filePath)
 	}
 
-	// Otherwise assume OOXML (ZIP-based .xlsx / .xlsm)
-	return readXLSX(filePath)
+	return nil, fmt.Errorf("%s: unsupported file format", filePath)
 }
 
 // readXLSX reads a true .xlsx file using excelize.
@@ -52,9 +57,16 @@ func readXLSX(filePath string) ([]rawSheet, error) {
 	var sheets []rawSheet
 
 	for _, name := range names {
-		rows, err := f.GetRows(name, excelize.Options{RawCellValue: true})
+		rawRows, err := f.GetRows(name, excelize.Options{RawCellValue: true})
 		if err != nil {
 			return nil, fmt.Errorf("read sheet [%s]: %w", name, err)
+		}
+		rows := make([][]string, 0, len(rawRows))
+		for _, r := range rawRows {
+			if isEmptyRow(r) {
+				continue
+			}
+			rows = append(rows, r)
 		}
 		sheets = append(sheets, rawSheet{Name: name, Rows: rows})
 	}
@@ -62,72 +74,58 @@ func readXLSX(filePath string) ([]rawSheet, error) {
 	return sheets, nil
 }
 
-// readXLS reads an old .xls (BIFF) file using extrame/xls.
+// readXLS reads an old .xls (BIFF) file using grate.
 func readXLS(filePath string) ([]rawSheet, error) {
-	wb, err := xls.Open(filePath, "utf-8")
+	wb, err := grate.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("open xls file: %w", err)
 	}
+	defer wb.Close()
+
+	names, err := wb.List()
+	if err != nil {
+		return nil, err
+	}
 
 	var sheets []rawSheet
-	for i := 0; i < wb.NumSheets(); i++ {
-		ws := wb.GetSheet(i)
-		if ws == nil {
-			continue
+	for _, name := range names {
+		s, err := wb.Get(name)
+		if err != nil {
+			return nil, fmt.Errorf("sheet [%s]: %w", name, err)
 		}
 
-		rowCount := int(ws.MaxRow) + 1
-		if rowCount <= 0 {
-			continue
-		}
-
-		rows := make([][]string, 0, rowCount)
-		for r := 0; r < rowCount; r++ {
-			row, ok := safeXLSRow(ws, r)
-			if !ok {
-				rows = append(rows, []string{})
+		var rows [][]string
+		for s.Next() {
+			vals := s.Strings()
+			if isEmptyRow(vals) {
 				continue
 			}
-			lastCol := row.LastCol()
-			if lastCol < 0 {
-				rows = append(rows, []string{})
-				continue
-			}
-			cols := make([]string, lastCol+1)
-			for c := 0; c <= lastCol; c++ {
-				cols[c] = row.Col(c)
-			}
-			rows = append(rows, cols)
+			row := make([]string, len(vals))
+			copy(row, vals)
+			rows = append(rows, row)
 		}
 
-		sheets = append(sheets, rawSheet{Name: ws.Name, Rows: rows})
+		sheets = append(sheets, rawSheet{Name: name, Rows: rows})
 	}
 
 	return sheets, nil
 }
 
-// safeXLSRow wraps xls.WorkSheet.Row to handle nil pointer panics
-// that occur when iterating past the last row of a sheet.
-func safeXLSRow(ws *xls.WorkSheet, i int) (row *xls.Row, ok bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			ok = false
-			row = nil
+// isEmptyRow reports whether a row has no non-empty cells.
+func isEmptyRow(vals []string) bool {
+	for _, v := range vals {
+		if v != "" {
+			return false
 		}
-	}()
-	row = ws.Row(i)
-	if row == nil {
-		return nil, false
 	}
-	return row, true
+	return true
 }
 
 // LoadExcel opens an Excel file and parses every sheet.
-// Automatically detects .xlsx (OOXML) vs .xls (BIFF) format.
 func LoadExcel(filePath string, opts Options) ([]Sheet, error) {
 	rawSheets, err := readExcelRows(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("open excel file: %w", err)
+		return nil, err
 	}
 
 	if len(rawSheets) == 0 {
@@ -136,7 +134,7 @@ func LoadExcel(filePath string, opts Options) ([]Sheet, error) {
 
 	nameRow := opts.NameRow
 	typeRow := opts.TypeRow
-	header := opts.HeaderRows
+	skipRows := opts.SkipRows
 
 	var sheets []Sheet
 
@@ -182,24 +180,23 @@ func LoadExcel(filePath string, opts Options) ([]Sheet, error) {
 		}
 
 		// --- data rows ---
-		dataStart := header
-		if dataStart <= nameRow {
-			return nil, fmt.Errorf("sheet [%s]: --header=%d must be greater than --name-row=%d",
-				rs.Name, header, nameRow)
+		if skipRows <= nameRow {
+			return nil, fmt.Errorf("sheet [%s]: --skip=%d must be greater than --name-row=%d",
+				rs.Name, skipRows, nameRow)
 		}
-		if hasTypes && dataStart <= typeRow {
-			return nil, fmt.Errorf("sheet [%s]: --header=%d must be greater than --type-row=%d",
-				rs.Name, header, typeRow)
+		if hasTypes && skipRows <= typeRow {
+			return nil, fmt.Errorf("sheet [%s]: --skip=%d must be greater than --type-row=%d",
+				rs.Name, skipRows, typeRow)
 		}
-		if dataStart < 0 {
-			dataStart = 0
+		if skipRows < 0 {
+			skipRows = 0
 		}
-		if dataStart > len(rows) {
-			dataStart = len(rows)
+		if skipRows > len(rows) {
+			skipRows = len(rows)
 		}
 
-		dataRows := make([][]string, 0, len(rows)-dataStart)
-		for ri := dataStart; ri < len(rows); ri++ {
+		dataRows := make([][]string, 0, len(rows)-skipRows)
+		for ri := skipRows; ri < len(rows); ri++ {
 			row := rows[ri]
 			padded := make([]string, maxCols)
 			copy(padded, row)

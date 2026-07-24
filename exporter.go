@@ -23,11 +23,11 @@ func NewExporter(opts Options) *Exporter {
 // Public API
 // ---------------------------------------------------------------------------
 
-// FilterSheets returns non-empty sheets whose names don't start with exclude_prefix.
+// FilterSheets returns non-empty sheets not matching --exclude prefixes.
 func (e *Exporter) FilterSheets(sheets []Sheet) []Sheet {
 	var out []Sheet
 	for _, s := range sheets {
-		if e.opts.ExcludePrefix != "" && strings.HasPrefix(s.Name, e.opts.ExcludePrefix) {
+		if e.skipSheet(s.Name) {
 			continue
 		}
 		if len(s.Headers) == 0 || len(s.Rows) == 0 {
@@ -52,7 +52,7 @@ func (e *Exporter) ConvertRow(sheet Sheet, rowIdx int, row []string) (map[string
 	idx := 0
 
 	for ci, header := range sheet.Headers {
-		if e.isExcluded(header) {
+		if e.skipColumn(header) {
 			continue
 		}
 
@@ -95,7 +95,7 @@ func (e *Exporter) ConvertRow(sheet Sheet, rowIdx int, row []string) (map[string
 func (e *Exporter) CSVColumns(sheet Sheet) []CSVColumn {
 	var cols []CSVColumn
 	for ci, header := range sheet.Headers {
-		if e.isExcluded(header) {
+		if e.skipColumn(header) {
 			continue
 		}
 		name := header
@@ -120,9 +120,24 @@ type CSVColumn struct {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-// isExcluded returns true when the column header starts with ExcludePrefix.
-func (e *Exporter) isExcluded(header string) bool {
-	return e.opts.ExcludePrefix != "" && strings.HasPrefix(header, e.opts.ExcludePrefix)
+// skipSheet returns true when the sheet name starts with any exclude prefix.
+func (e *Exporter) skipSheet(name string) bool {
+	for _, p := range e.opts.ExcludePrefix {
+		if p != "" && strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// skipColumn returns true when a column name starts with any exclude prefix.
+func (e *Exporter) skipColumn(header string) bool {
+	for _, p := range e.opts.ExcludePrefix {
+		if p != "" && strings.HasPrefix(header, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // toArray produces []any from every data row.
@@ -152,7 +167,7 @@ func (e *Exporter) toDict(sheet Sheet) (map[string]any, error) {
 		if e.opts.Lowcase {
 			keyName = strings.ToLower(keyName)
 		}
-		if e.isExcluded(keyName) {
+		if e.skipColumn(keyName) {
 			keyName = ""
 		}
 	}

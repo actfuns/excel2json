@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	version  = "v0.1.7" // overridden by -ldflags
+	version  = "v0.1.8" // overridden by -ldflags
 	opts     Options
 	stdoutMu sync.Mutex
 )
@@ -30,13 +30,25 @@ and exports each to JSON or CSV.
 
 Output routing (determined by -o and input count):
 
-  excel2json data.xlsx                  → JSON to stdout
-  excel2json data.xlsx --format csv     → CSV  to stdout
-  excel2json data.xlsx -o out.json      → JSON to out.json
-  excel2json data.xlsx -o ./dir/        → ./dir/data.json
-  excel2json a.xlsx b.xlsx -o ./dir/    → ./dir/a.json ./dir/b.json`,
+  excel2json data.xlsx             → JSON to stdout
+  excel2json data.xlsx -f csv      → CSV  to stdout
+  excel2json data.xlsx -o out.json → JSON to out.json
+  excel2json data.xlsx -o ./dir/   → ./dir/data.json
+  excel2json a.xlsx b.xlsx -o ./dir/ → ./dir/a.json ./dir/b.json`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// resolve filename: --name-tpl > --name > default {file}_{sheet}
+		if !cmd.Flags().Changed("name-tpl") && cmd.Flags().Changed("name") {
+			switch opts.Name {
+			case "file":
+				opts.NameTmpl = "{file}"
+			case "sheet":
+				opts.NameTmpl = "{sheet}"
+			case "both":
+				opts.NameTmpl = "{file}_{sheet}"
+			}
+		}
+
 		files := expandInputs(args)
 
 		if err := run(files, opts); err != nil {
@@ -48,28 +60,30 @@ Output routing (determined by -o and input count):
 }
 
 func init() {
-	// Output
-	rootCmd.Flags().StringVarP(&opts.OutputPath, "out", "o", "", "output path (file for single input, dir for multiple inputs)")
-	rootCmd.Flags().StringVar(&opts.Format, "format", "json", "output format: json or csv")
+	// Input / Output
+	rootCmd.Flags().StringVarP(&opts.OutputPath, "out", "o", "", "output path (file or directory)")
+	rootCmd.Flags().StringVarP(&opts.Format, "format", "f", "json", "output format: json or csv")
 
 	// Data parsing
-	rootCmd.Flags().IntVar(&opts.NameRow, "name-row", 0, "row index (0-based) for column names")
-	rootCmd.Flags().IntVar(&opts.TypeRow, "type-row", -1, "row index (0-based) for type annotations (-1 to disable)")
-	rootCmd.Flags().IntVar(&opts.HeaderRows, "header", 1, "total header rows before data (must be > name-row and > type-row)")
-	rootCmd.Flags().StringVarP(&opts.Encoding, "encoding", "c", "utf8-nobom", "output file encoding")
-	rootCmd.Flags().StringVarP(&opts.DateFormat, "date", "d", "yyyy/MM/dd", "date format string")
+	rootCmd.Flags().IntVarP(&opts.NameRow, "name-row", "n", 0, "row index for column names (0-based)")
+	rootCmd.Flags().IntVarP(&opts.TypeRow, "type-row", "t", -1, "row index for type annotations (-1 to disable)")
+	rootCmd.Flags().IntVarP(&opts.SkipRows, "skip-rows", "s", 1, "rows to skip before data (0-based)")
+	rootCmd.Flags().StringVarP(&opts.Encoding, "encoding", "e", "utf8-nobom", "output file encoding")
+	rootCmd.Flags().StringVarP(&opts.DateFormat, "date-format", "d", "yyyy/MM/dd", "date format string")
 
 	// Field processing
 	rootCmd.Flags().BoolVarP(&opts.Lowcase, "lowcase", "l", false, "convert field names to lowercase")
-	rootCmd.Flags().StringVarP(&opts.ExcludePrefix, "exclude_prefix", "x", "", "skip sheets/columns with this prefix")
-	rootCmd.Flags().BoolVar(&opts.CellJSON, "cell_json", false, "parse JSON strings inside cells")
-	rootCmd.Flags().BoolVar(&opts.AllString, "all_string", false, "convert all values to strings")
+	rootCmd.Flags().StringArrayVarP(&opts.ExcludePrefix, "exclude", "x", nil, "skip sheets & columns with prefix (repeatable)")
+	rootCmd.Flags().BoolVar(&opts.CellJSON, "cell-json", false, "parse JSON strings inside cells")
+	rootCmd.Flags().BoolVar(&opts.AllString, "all-string", false, "convert all values to strings")
 
 	// Output format
-	rootCmd.Flags().BoolVarP(&opts.ExportArray, "array", "a", false, "export as array (default: dict keyed by first column)")
-	rootCmd.Flags().BoolVarP(&opts.ForceSheetName, "sheet", "s", false, "force sheet-name wrapping even for single sheet")
-	rootCmd.Flags().BoolVar(&opts.Pretty, "pretty", false, "pretty-print JSON with tab indentation")
-	rootCmd.Flags().StringVar(&opts.KeyColumn, "key-col", "", "column name to use as dict key (default: first column)")
+	rootCmd.Flags().BoolVarP(&opts.ExportArray, "array", "a", false, "export as array instead of dict")
+	rootCmd.Flags().BoolVarP(&opts.Merge, "merge", "m", false, "merge all sheets into one file (default: split)")
+	rootCmd.Flags().StringVar(&opts.NameTmpl, "name-tpl", "{file}_{sheet}", "output filename template with {file} {sheet} (overrides --name)")
+	rootCmd.Flags().StringVar(&opts.Name, "name", "", "filename preset: both, file, sheet (ignored if --name-tpl is set)")
+	rootCmd.Flags().BoolVarP(&opts.Pretty, "pretty", "p", false, "pretty-print JSON")
+	rootCmd.Flags().StringVarP(&opts.KeyColumn, "key", "k", "", "column name for dict keys (default: first column)")
 }
 
 func main() {
@@ -118,6 +132,31 @@ func run(files []string, opts Options) error {
 					os.MkdirAll(target, 0755)
 					path = filepath.Join(target, fileStem(f)+".json")
 				}
+
+				// default: split — each sheet to its own file
+				// -m/--merge: join all sheets into one file
+				if !opts.Merge && target != "" {
+					exp := NewExporter(opts)
+					valid := exp.FilterSheets(sheets)
+					dir := target
+					if !targetIsDir {
+						dir = filepath.Dir(path)
+					}
+					os.MkdirAll(dir, 0755)
+					for _, s := range valid {
+						name := formatName(opts.NameTmpl, fileStem(f), s.Name) + ".json"
+						spath := filepath.Join(dir, sanitizeName(name))
+						if err := writeOneJSON(s, opts, spath); err != nil {
+							if toStdout {
+								stdoutMu.Unlock()
+							}
+							return fmt.Errorf("%s: %w", f, err)
+						}
+						lines = append(lines, spath)
+					}
+					break
+				}
+
 				if err := writeJSON(sheets, opts, path); err != nil {
 					if toStdout {
 						stdoutMu.Unlock()
@@ -207,6 +246,19 @@ func writeJSON(sheets []Sheet, opts Options, target string) error {
 	return os.WriteFile(target, data, 0644)
 }
 
+// writeOneJSON serialises a single sheet to JSON and writes to path.
+func writeOneJSON(sheet Sheet, opts Options, path string) error {
+	content, err := ExportJSON([]Sheet{sheet}, opts)
+	if err != nil {
+		return err
+	}
+	data, err := encodeContent(content, opts.Encoding)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
 // expandInputs expands directories into their .xls/.xlsx file list.
 // Non-directory args are kept as-is.
 func expandInputs(args []string) []string {
@@ -240,6 +292,13 @@ func expandInputs(args []string) []string {
 }
 
 // isDirPath / fileStem defined in csv_exporter.go / types.go
+
+// formatName replaces {file} and {sheet} placeholders in a template string.
+func formatName(tmpl, file, sheet string) string {
+	s := strings.ReplaceAll(tmpl, "{file}", file)
+	s = strings.ReplaceAll(s, "{sheet}", sheet)
+	return s
+}
 
 func encodeContent(s, enc string) ([]byte, error) {
 	switch enc {
