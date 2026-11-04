@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	version  = "v0.1.8" // overridden by -ldflags
+	version  = "v0.1.9" // overridden by -ldflags
 	opts     Options
 	stdoutMu sync.Mutex
 )
@@ -76,6 +76,7 @@ func init() {
 	rootCmd.Flags().StringArrayVarP(&opts.ExcludePrefix, "exclude", "x", nil, "skip sheets & columns with prefix (repeatable)")
 	rootCmd.Flags().BoolVar(&opts.CellJSON, "cell-json", false, "parse JSON strings inside cells")
 	rootCmd.Flags().BoolVar(&opts.AllString, "all-string", false, "convert all values to strings")
+	rootCmd.Flags().BoolVarP(&opts.Required, "required", "r", false, "unmarked types are required")
 
 	// Output format
 	rootCmd.Flags().BoolVarP(&opts.ExportArray, "array", "a", false, "export as array instead of dict")
@@ -129,7 +130,9 @@ func run(files []string, opts Options) error {
 			case "json":
 				path := target
 				if targetIsDir {
-					os.MkdirAll(target, 0755)
+					if err := os.MkdirAll(target, 0755); err != nil {
+						return fmt.Errorf("%s: mkdir %s: %w", f, target, err)
+					}
 					path = filepath.Join(target, fileStem(f)+".json")
 				}
 
@@ -142,7 +145,9 @@ func run(files []string, opts Options) error {
 					if !targetIsDir {
 						dir = filepath.Dir(path)
 					}
-					os.MkdirAll(dir, 0755)
+					if err := os.MkdirAll(dir, 0755); err != nil {
+						return fmt.Errorf("%s: mkdir %s: %w", f, dir, err)
+					}
 					for _, s := range valid {
 						name := formatName(opts.NameTmpl, fileStem(f), s.Name) + ".json"
 						spath := filepath.Join(dir, sanitizeName(name))
@@ -170,7 +175,9 @@ func run(files []string, opts Options) error {
 			case "csv":
 				path := target
 				if targetIsDir {
-					os.MkdirAll(target, 0755)
+					if err := os.MkdirAll(target, 0755); err != nil {
+						return fmt.Errorf("%s: mkdir %s: %w", f, target, err)
+					}
 					path = filepath.Join(target, fileStem(f)+".csv")
 				}
 				if err := exportCSV(sheets, opts, path); err != nil {
@@ -180,7 +187,19 @@ func run(files []string, opts Options) error {
 					return fmt.Errorf("%s: %w", f, err)
 				}
 				if path != "" {
-					lines = append(lines, path)
+					if targetIsDir {
+						valid := NewExporter(opts).FilterSheets(sheets)
+						if len(valid) > 1 {
+							stem := strings.TrimSuffix(filepath.Base(path), ".csv")
+							for _, s := range valid {
+								lines = append(lines, filepath.Join(target, stem+"_"+sanitizeName(s.Name)+".csv"))
+							}
+						} else {
+							lines = append(lines, path)
+						}
+					} else {
+						lines = append(lines, path)
+					}
 				}
 
 			default:
@@ -268,7 +287,10 @@ func expandInputs(args []string) []string {
 		fi, err := os.Stat(a)
 		if err != nil || !fi.IsDir() {
 			// file or nonexistent — keep as-is (cobra already validated N>=1)
-			out = append(out, a)
+			if !seen[a] {
+				seen[a] = true
+				out = append(out, a)
+			}
 			continue
 		}
 		// directory — glob xls/xlsx

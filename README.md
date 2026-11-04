@@ -63,6 +63,9 @@ excel2json data.xlsx -x S_ -x cs_
 excel2json data.xlsx --name file           # just filename
 excel2json data.xlsx --name sheet          # just sheet name
 excel2json data.xlsx --name-tpl 'my_{file}_{sheet}'   # custom template
+
+# Strongly typed columns (type row = row 2, data starts at row 3)
+excel2json data.xlsx -t 1 -s 2 --required
 ```
 
 ### Options
@@ -75,6 +78,7 @@ excel2json data.xlsx --name-tpl 'my_{file}_{sheet}'   # custom template
 | | | **Data parsing** |
 | `-n` | `--name-row` | `0` | Row index for column names (0-based) |
 | `-t` | `--type-row` | `-1` | Row index for type annotations (-1 to disable) |
+| `-r` | `--required` | `false` | Treat types without `?`/`!` as required (empty cells error) |
 | `-s` | `--skip-rows` | `1` | Rows to skip before data (0-based) |
 | `-e` | `--encoding` | `utf8-nobom` | Output file encoding |
 | `-d` | `--date-format` | `yyyy/MM/dd` | Date format string |
@@ -147,10 +151,46 @@ Use `-m` to merge all sheets into one file:
 
 ---
 
+## Type annotations
+
+Set `-t/--type-row` to the row containing type annotations (0-based). Cells are then converted and strictly validated.
+
+| Category | Types |
+|---|---|
+| Scalars | `bool`, `string`, `int`, `int8`, `int16`, `int32`, `int64`, `uint`, `uint8`, `uint16`, `uint32`, `uint64`, `uintptr`, `float32`, `float64`, `byte`, `rune`, `any`, `interface{}` |
+| Arrays / slices | `[]T`, `[N]T` |
+| Maps | `map[K]V` |
+| Extras | `date`, `float` (= `float64`), `object` (= `map[string]any`), `list` (= `[]any`) |
+
+Composite values must be valid JSON in the cell, e.g. `[1,2,3]` or `{"a":"b"}`. Array length, element types, numeric ranges, map keys and map values are all validated.
+
+`any` / `interface{}` keep the legacy auto behavior: numbers are detected automatically, and JSON is parsed only with `--cell-json`. `date` falls back to the original string when parsing fails.
+
+### Required / optional
+
+| Annotation | Meaning |
+|---|---|
+| `T` | Uses the global default (`--required`) |
+| `T!` | Required: an empty cell is an error |
+| `T?` | Optional: an empty cell is allowed |
+
+Unmarked types are optional by default. Pass `-r/--required` to make them required; explicit `?` and `!` always take precedence. Markers apply to the whole column type, not to nested elements.
+
+Empty optional cells produce `0`, `false`, `""`, or `null` (for composite types); `?` only relaxes the empty check and does not change that output. Unknown types and invalid values produce an error with sheet, row and column context.
+
+```text
+row 1 (names):   id    tags      attrs
+row 2 (types):   int   [3]int!   map[string]string?
+row 3 (data):    1     [1,2,3]   {"a":"b"}
+```
+
+---
+
 ## Features
 
 - **Parallel processing**: files are processed concurrently (up to `2 × CPU cores`)
 - **Prefix exclusion**: use `-x` (prefix match) to skip sheets & columns; repeatable
+- **Strong typing**: Go-style type annotations with arrays, slices, maps, numeric validation and required markers (`-t`, `-r`)
 - **Smart cell parsing**: JSON strings inside cells are deserialised in-place (`--cell-json`)
 - **All-string mode**: disable all parsing, output raw strings (`--all-string`)
 - **Field name lowercasing**: `--lowcase` for case-insensitive consumers

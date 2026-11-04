@@ -104,6 +104,9 @@ func readXLS(filePath string) ([]rawSheet, error) {
 			copy(row, vals)
 			rows = append(rows, row)
 		}
+		if err := s.Err(); err != nil {
+			return nil, fmt.Errorf("sheet [%s]: %w", name, err)
+		}
 
 		sheets = append(sheets, rawSheet{Name: name, Rows: rows})
 	}
@@ -111,10 +114,10 @@ func readXLS(filePath string) ([]rawSheet, error) {
 	return sheets, nil
 }
 
-// isEmptyRow reports whether a row has no non-empty cells.
+// isEmptyRow reports whether a row has no non-blank cells.
 func isEmptyRow(vals []string) bool {
 	for _, v := range vals {
-		if v != "" {
+		if strings.TrimSpace(v) != "" {
 			return false
 		}
 	}
@@ -188,15 +191,16 @@ func LoadExcel(filePath string, opts Options) ([]Sheet, error) {
 			return nil, fmt.Errorf("sheet [%s]: --skip=%d must be greater than --type-row=%d",
 				rs.Name, skipRows, typeRow)
 		}
-		if skipRows < 0 {
-			skipRows = 0
+		sheetSkip := skipRows
+		if sheetSkip < 0 {
+			sheetSkip = 0
 		}
-		if skipRows > len(rows) {
-			skipRows = len(rows)
+		if sheetSkip > len(rows) {
+			sheetSkip = len(rows)
 		}
 
-		dataRows := make([][]string, 0, len(rows)-skipRows)
-		for ri := skipRows; ri < len(rows); ri++ {
+		dataRows := make([][]string, 0, len(rows)-sheetSkip)
+		for ri := sheetSkip; ri < len(rows); ri++ {
 			row := rows[ri]
 			padded := make([]string, maxCols)
 			copy(padded, row)

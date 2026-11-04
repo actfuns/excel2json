@@ -6,12 +6,14 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Exporter is the core conversion engine shared by JSON and CSV exporters.
 type Exporter struct {
-	opts Options
+	opts      Options
+	typeCache sync.Map // map[string]cachedType
 }
 
 // NewExporter returns an Exporter ready for use.
@@ -49,7 +51,6 @@ func (e *Exporter) ConvertSheet(sheet Sheet) (any, error) {
 // ConvertRow transforms a single data row into a map keyed by column name.
 func (e *Exporter) ConvertRow(sheet Sheet, rowIdx int, row []string) (map[string]any, error) {
 	out := make(map[string]any)
-	idx := 0
 
 	for ci, header := range sheet.Headers {
 		if e.skipColumn(header) {
@@ -82,11 +83,10 @@ func (e *Exporter) ConvertRow(sheet Sheet, rowIdx int, row []string) (map[string
 			name = strings.ToLower(name)
 		}
 		if name == "" {
-			name = fmt.Sprintf("col_%d", idx)
+			name = fmt.Sprintf("col_%d", ci)
 		}
 
 		out[name] = val
-		idx++
 	}
 	return out, nil
 }
@@ -194,72 +194,12 @@ func (e *Exporter) toDict(sheet Sheet) (map[string]any, error) {
 // convertCell converts and validates a raw cell string according to its type annotation.
 // If colType is empty, falls back to legacy automatic behavior (number detection, CellJSON).
 func (e *Exporter) convertCell(colType, cell string) (any, error) {
-	if cell == "" {
-		return typeDefault(colType), nil
-	}
-
-	// --- With type annotation → strict typed conversion ---
 	if colType != "" {
-		switch colType {
-		case TypeInt:
-			v, err := strconv.ParseInt(strings.TrimSpace(cell), 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("expected int, got %q", cell)
-			}
-			return v, nil
-
-		case TypeFloat:
-			v, err := strconv.ParseFloat(strings.TrimSpace(cell), 64)
-			if err != nil {
-				return nil, fmt.Errorf("expected float, got %q", cell)
-			}
-			return v, nil
-
-		case TypeBool:
-			v, err := strconv.ParseBool(strings.ToLower(strings.TrimSpace(cell)))
-			if err != nil {
-				return nil, fmt.Errorf("expected bool, got %q", cell)
-			}
-			return v, nil
-
-		case TypeDate:
-			return e.convertDate(cell)
-
-		case TypeAny:
-			return e.legacyConvert(cell)
-
-		case TypeObject:
-			trimmed := strings.TrimSpace(cell)
-			if trimmed == "" || trimmed[0] != '{' {
-				return nil, fmt.Errorf("expected JSON object, got %q", cell)
-			}
-			var parsed any
-			if json.Unmarshal([]byte(trimmed), &parsed) != nil || parsed == nil {
-				return nil, fmt.Errorf("expected valid JSON object, got %q", cell)
-			}
-			return parsed, nil
-
-		case TypeList:
-			trimmed := strings.TrimSpace(cell)
-			if trimmed == "" || trimmed[0] != '[' {
-				return nil, fmt.Errorf("expected JSON array, got %q", cell)
-			}
-			var parsed any
-			if json.Unmarshal([]byte(trimmed), &parsed) != nil || parsed == nil {
-				return nil, fmt.Errorf("expected valid JSON array, got %q", cell)
-			}
-			return parsed, nil
-
-		case TypeString:
-			return cell, nil
-
-		default:
-			// Unknown type annotation → treat as string, no error
-			return cell, nil
-		}
+		return e.convertTyped(colType, cell)
 	}
-
-	// --- No type annotation → legacy automatic behavior ---
+	if cell == "" {
+		return "", nil
+	}
 	return e.legacyConvert(cell)
 }
 
@@ -281,10 +221,10 @@ func (e *Exporter) legacyConvert(cell string) (any, error) {
 	}
 
 	// number parsing: 3.0 → 3 (strip redundant .0), then all_string
-	if f, err := strconv.ParseFloat(cell, 64); err == nil {
+	if f, err := strconv.ParseFloat(cell, 64); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
 		// Use epsilon tolerance to catch floating-point imprecision
 		// (e.g. Excel may store 15700 as 15699.999999999998 internally).
-		if i := int64(math.Round(f)); math.Abs(f-float64(i)) < 1e-9 && !math.IsInf(f, 0) {
+		if i := int64(math.Round(f)); math.Abs(f-float64(i)) < 1e-9 {
 			if e.opts.AllString {
 				return strconv.FormatInt(i, 10), nil
 			}
@@ -309,6 +249,10 @@ type dateValue struct {
 
 func (d dateValue) MarshalJSON() ([]byte, error) {
 	return json.Marshal(d.t.Format(d.format))
+}
+
+func (d dateValue) String() string {
+	return d.t.Format(d.format)
 }
 
 // convertDate converts a raw cell value (expected to be an Excel date serial number
@@ -348,11 +292,12 @@ func (e *Exporter) convertDate(cell string) (any, error) {
 }
 
 // excelSerialToTime converts an integer Excel date serial number to time.Time.
-// Excel serial number 1 = January 1, 1900.
-// Due to the Lotus 123 bug, serial day 60 = Feb 29, 1900 (which never existed).
+// Excel serial number 1 = January 1, 1900. Due to the Lotus 123 bug, Excel
+// treats serial 60 as Feb 29, 1900 (which never existed). With the 1899-12-30
+// epoch, serials below 60 therefore need a +1 day adjustment.
 func excelSerialToTime(serial int64) time.Time {
-	if serial >= 61 {
-		serial-- // compensate for Lotus 123 leap-year bug
+	if serial < 60 {
+		serial++
 	}
 	return time.Date(1899, 12, 30, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(serial))
 }

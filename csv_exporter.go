@@ -37,7 +37,9 @@ func exportCSV(sheets []Sheet, opts Options, outPath string) error {
 		// treat outPath as a stem: /tmp/out/multi.csv → /tmp/out/multi_Sheet1.csv
 		dir := filepath.Dir(outPath)
 		stem := strings.TrimSuffix(filepath.Base(outPath), ".csv")
-		os.MkdirAll(dir, 0755)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", dir, err)
+		}
 		for _, s := range valid {
 			name := sanitizeName(s.Name)
 			p := filepath.Join(dir, stem+"_"+name+".csv")
@@ -90,10 +92,10 @@ func writeCSVSeq(w io.Writer, sheets []Sheet, exp *Exporter) error {
 }
 
 // writeCSV writes a single sheet to a writer.
-// Type conversion reuses ConvertSheet so CSV and JSON share one code path.
+// Rows are converted in source order (never via the dict map) so CSV output
+// stays deterministic and duplicate keys are preserved.
 func writeCSV(w io.Writer, sheet Sheet, exp *Exporter) error {
 	cw := csv.NewWriter(w)
-	defer cw.Flush()
 
 	cols := exp.CSVColumns(sheet)
 
@@ -106,28 +108,10 @@ func writeCSV(w io.Writer, sheet Sheet, exp *Exporter) error {
 		return fmt.Errorf("write header: %w", err)
 	}
 
-	// Convert the entire sheet — unified type conversion & error reporting
-	anyRows, err := exp.ConvertSheet(sheet)
-	if err != nil {
-		return err
-	}
-
-	// Normalise to a slice for iteration (array mode → []any, dict → values)
-	var rows []any
-	switch v := anyRows.(type) {
-	case []any:
-		rows = v
-	case map[string]any:
-		rows = make([]any, 0, len(v))
-		for _, val := range v {
-			rows = append(rows, val)
-		}
-	}
-
-	for _, item := range rows {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
+	for ri, row := range sheet.Rows {
+		m, err := exp.ConvertRow(sheet, ri, row)
+		if err != nil {
+			return err
 		}
 		rec := make([]string, len(cols))
 		for i, c := range cols {
@@ -136,6 +120,11 @@ func writeCSV(w io.Writer, sheet Sheet, exp *Exporter) error {
 		if err := cw.Write(rec); err != nil {
 			return fmt.Errorf("write row: %w", err)
 		}
+	}
+
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		return fmt.Errorf("flush csv: %w", err)
 	}
 	return nil
 }
@@ -151,6 +140,8 @@ func formatCell(v any) string {
 		return strconv.FormatBool(val)
 	case int64:
 		return strconv.FormatInt(val, 10)
+	case uint64:
+		return strconv.FormatUint(val, 10)
 	case float64:
 		return strconv.FormatFloat(val, 'f', -1, 64)
 	case string:

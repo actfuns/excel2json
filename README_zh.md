@@ -61,6 +61,9 @@ excel2json data.xlsx -x S_ -x cs_
 excel2json data.xlsx --name file              # 只用文件名
 excel2json data.xlsx --name sheet             # 只用 sheet 名
 excel2json data.xlsx --name-tpl 'my_{file}_{sheet}'  # 自定义模板
+
+# 强类型列（类型行 = 第 2 行，数据从第 3 行开始）
+excel2json data.xlsx -t 1 -s 2 --required
 ```
 
 ### 选项
@@ -73,6 +76,7 @@ excel2json data.xlsx --name-tpl 'my_{file}_{sheet}'  # 自定义模板
 | | | **数据解析** |
 | `-n` | `--name-row` | `0` | 列名所在行号（从 0 开始） |
 | `-t` | `--type-row` | `-1` | 类型注释所在行号（-1 禁用） |
+| `-r` | `--required` | `false` | 未加 `?`/`!` 标记的类型默认必填（空单元格报错） |
 | `-s` | `--skip-rows` | `1` | 数据前跳过的行数 |
 | `-e` | `--encoding` | `utf8-nobom` | 输出文件编码 |
 | `-d` | `--date-format` | `yyyy/MM/dd` | 日期格式字符串 |
@@ -145,10 +149,46 @@ excel2json data.xlsx --name-tpl 'my_{file}_{sheet}'  # 自定义模板
 
 ---
 
+## 类型注解
+
+通过 `-t/--type-row` 指定类型注解所在行（从 0 开始），该列会按类型严格转换和校验。
+
+| 分类 | 类型 |
+|---|---|
+| 基础类型 | `bool`、`string`、`int`、`int8`、`int16`、`int32`、`int64`、`uint`、`uint8`、`uint16`、`uint32`、`uint64`、`uintptr`、`float32`、`float64`、`byte`、`rune`、`any`、`interface{}` |
+| 数组 / 切片 | `[]T`、`[N]T` |
+| Map | `map[K]V` |
+| 额外别名 | `date`、`float`（= `float64`）、`object`（= `map[string]any`）、`list`（= `[]any`） |
+
+复合类型要求单元格内容为合法 JSON，例如 `[1,2,3]` 或 `{"a":"b"}`。数组长度、元素类型、数值范围、map 的 key 和 value 都会校验。
+
+`any` / `interface{}` 保持旧的自动解析行为：自动识别数字，只有加 `--cell-json` 才解析 JSON。`date` 解析失败时会原样输出字符串。
+
+### 必填 / 可空
+
+| 类型写法 | 含义 |
+|---|---|
+| `T` | 使用全局默认值（由 `--required` 决定） |
+| `T!` | 必填：空单元格报错 |
+| `T?` | 可空：允许空单元格 |
+
+未加标记的类型默认可空。加 `-r/--required` 后，未加标记的类型默认必填；显式 `?` 和 `!` 优先级更高。标记作用于整个字段类型，不作用于数组元素或 map 的 value。
+
+可空类型遇到空单元格时输出 `0`、`false`、`""`，复合类型输出 `null`；`?` 只放宽空值校验，不改变空值输出。未知类型和非法值都会报错，并带上 sheet、行、列信息。
+
+```text
+第 1 行（列名）: id    tags      attrs
+第 2 行（类型）: int   [3]int!   map[string]string?
+第 3 行（数据）: 1     [1,2,3]   {"a":"b"}
+```
+
+---
+
 ## 特性
 
 - **并行处理**：文件并发处理（上限 `2 × CPU 核心数`）
 - **前缀排除**：使用 `-x`（前缀匹配）跳过 sheet 和列；可重复使用
+- **强类型注解**：支持 Go 风格基础类型、数组/切片/map，以及数值范围校验和 `!`/`?` 必填标记（`-t`、`-r`）
 - **智能单元格解析**：单元格中的 JSON 字符串自动反序列化（`--cell-json`）
 - **全字符串模式**：关闭所有解析，输出原始字符串（`--all-string`）
 - **字段名小写**：`-l` 转小写

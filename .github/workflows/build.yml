@@ -30,6 +30,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Test
+        run: go test ./...
+
       - name: Build
         shell: bash
         run: go build -o excel2json${{ matrix.os == 'windows-latest' && '.exe' || '' }} .

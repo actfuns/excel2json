@@ -5,37 +5,6 @@ import (
 	"strings"
 )
 
-// Supported type annotations for the type row feature.
-const (
-	TypeInt    = "int"
-	TypeFloat  = "float"
-	TypeBool   = "bool"
-	TypeString = "string"
-	TypeDate   = "date"
-	TypeAny    = "any"
-	TypeObject = "object"
-	TypeList   = "list"
-)
-
-// typeDefault returns the zero/null default value for a given type annotation.
-// When a typed cell is empty, this value is emitted instead of omitting the field.
-func typeDefault(colType string) any {
-	switch colType {
-	case TypeInt:
-		return int64(0)
-	case TypeFloat:
-		return float64(0)
-	case TypeBool:
-		return false
-	case TypeString, TypeDate:
-		return ""
-	case TypeAny, TypeObject, TypeList:
-		return nil
-	default:
-		return ""
-	}
-}
-
 // Options maps CLI flags.
 type Options struct {
 	// Input / output
@@ -54,6 +23,10 @@ type Options struct {
 	ExcludePrefix []string // -x --exclude   skip sheets/columns with prefix (repeatable)
 	CellJSON      bool     // --cell-json          parse JSON strings inside cells
 	AllString     bool     // --all-string         convert all values to strings
+
+	// Nullability
+	// Required treats types without ?/! as required (empty cell errors).
+	Required bool // -r --required
 
 	// Output format
 	ExportArray bool   // -a --array    export as array instead of dict
