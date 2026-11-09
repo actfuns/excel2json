@@ -27,6 +27,9 @@ jobs:
       - name: Tidy
         run: go mod tidy
 
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+
       - name: Vet
         run: go vet ./...
 
@@ -35,7 +38,7 @@ jobs:
 
       - name: Build
         shell: bash
-        run: go build -o excel2json${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
+        run: go build -o excel2json${{ matrix.os == 'windows-latest' && '.exe' || '' }} ./cmd/excel2json
 
       - name: Smoke test
         shell: bash

@@ -11,7 +11,7 @@ A Go port of the [excel2json](https://github.com/neil3d/excel2json) C# tool with
 ## Install
 
 ```bash
-go install github.com/actfuns/excel2json@latest
+go install github.com/actfuns/excel2json/cmd/excel2json@latest
 ```
 
 Or build from source:
@@ -19,7 +19,7 @@ Or build from source:
 ```bash
 git clone https://github.com/actfuns/excel2json.git
 cd excel2json
-go build -o excel2json .
+go build -o excel2json ./cmd/excel2json   # or: make build
 ```
 
 ---
@@ -28,6 +28,7 @@ go build -o excel2json .
 
 ```bash
 excel2json [options] <inputs...> [-o <path>] [-f json|csv]
+excel2json --version
 ```
 
 Inputs can be file paths or directories (`.xls`/`.xlsx` files inside are collected automatically).
@@ -48,24 +49,22 @@ excel2json data.xlsx -p
 excel2json data.xlsx -o ./output/
 
 # Merge all sheets into one file
-excel2json data.xlsx -o out.json -m
+excel2json data.xlsx -o out.json
 
 # Use custom column as dict key
 excel2json data.xlsx -k cs_id
 
-# Skip rows before data
-excel2json data.xlsx -s 2
+# Start reading data at row index 2 (-1 = auto)
+excel2json data.xlsx --data-row 2
 
 # Exclude sheets & columns starting with prefix
 excel2json data.xlsx -x S_ -x cs_
 
 # Custom output filenames
-excel2json data.xlsx --name file           # just filename
-excel2json data.xlsx --name sheet          # just sheet name
 excel2json data.xlsx --name-tpl 'my_{file}_{sheet}'   # custom template
 
 # Strongly typed columns (type row = row 2, data starts at row 3)
-excel2json data.xlsx -t 1 -s 2 --required
+excel2json data.xlsx -t 1 --required-by-default
 ```
 
 ### Options
@@ -76,25 +75,27 @@ excel2json data.xlsx -t 1 -s 2 --required
 | `-o` | `--out` | `""` | Output path (file or directory) |
 | `-f` | `--format` | `json` | Output format: `json` or `csv` |
 | | | **Data parsing** |
-| `-n` | `--name-row` | `0` | Row index for column names (0-based) |
+| `-n` | `--header-row` | `0` | Row index for column names (0-based) |
 | `-t` | `--type-row` | `-1` | Row index for type annotations (-1 to disable) |
-| `-r` | `--required` | `false` | Treat headers without `!`/`?` as required (empty cells error) |
-| `-s` | `--skip-rows` | `1` | Rows to skip before data (0-based) |
-| `-e` | `--encoding` | `utf8-nobom` | Output file encoding |
+| `-r` | `--required-by-default` | `false` | Treat headers without `!`/`?` as required (empty cells error) |
+| `-s` | `--data-row` | `-1` | First data row index (0-based, -1 = auto) |
+| `-e` | `--encoding` | `utf8-nobom` | File output encoding: `utf8`, `utf8-nobom`, `utf8-bom`, `gbk`, `gb18030` |
 | `-d` | `--date-format` | `yyyy/MM/dd` | Date format string |
 | | | **Field processing** |
-| `-l` | `--lowcase` | `false` | Convert field names to lowercase |
+| `-l` | `--lowercase` | `false` | Convert field names to lowercase |
 | `-x` | `--exclude` | `nil` | Skip sheets & columns with prefix (repeatable) |
-| | `--cell-json` | `false` | Parse JSON strings inside cells |
-| | `--all-string` | `false` | Convert all values to strings |
+| | `--parse-cell-json` | `false` | Parse JSON strings inside untyped cells |
+| | `--stringify-all` | `false` | Stringify untyped values |
 | | `--types` | `""` | types.yaml / types.yml path (auto-discovered next to the input or in cwd) |
 | | | **Output format** |
-| `-a` | `--array` | `false` | Export as array (default: dict keyed by first column) |
-| `-m` | `--merge` | `false` | Merge all sheets into one file (default: split) |
-| | `--name-tpl` | `{file}_{sheet}` | Output filename template with `{file}` `{sheet}` |
-| | `--name` | `""` | Preset: `both`, `file`, `sheet` (ignored if `--name-tpl` set) |
+| | `--list` | `false` | Export JSON as a list/array (default: dict keyed by first column) |
+| `-m` | `--merge-sheets` | `false` | Merge all sheets into one file (JSON object or CSV sections) |
+| | `--name-tpl` | `{file}_{sheet}` | Split-output filename template with `{file}` `{sheet}` (JSON & CSV) |
 | `-p` | `--pretty` | `false` | Pretty-print JSON with tab indentation |
 | `-k` | `--key` | `""` | Column name for dict keys (default: first column) |
+| | `--unique-keys` | `false` | Error on duplicate or empty dict keys (default: last wins) |
+
+Row indices (`--header-row`, `--type-row`, `--data-row`) refer to actual 0-based sheet rows. Blank rows are preserved for locating header/type rows and skipped in the data area. `--data-row=-1` uses the row after the header/type rows.
 
 ---
 
@@ -165,18 +166,18 @@ Set `-t/--type-row` to the row containing type annotations (0-based). Cells are 
 
 Composite values must be valid JSON in the cell, e.g. `[1,2,3]` or `{"a":"b"}`. Array length, element types, numeric ranges, map keys and map values are all validated.
 
-`any` / `interface{}` keep the legacy auto behavior: numbers are detected automatically, and JSON is parsed only with `--cell-json`. `date` falls back to the original string when parsing fails.
+`any` / `interface{}` keep the legacy auto behavior: numbers are detected automatically, and JSON is parsed only with `--parse-cell-json`. `date` falls back to the original string when parsing fails.
 
 ### Required / optional (header)
 
-Emptiness is controlled only by the header marker or `--required`:
+Emptiness is controlled only by the header marker or `--required-by-default`:
 
 | Header | Meaning | Output key |
 |---|---|---|
 | `id!` | required, an empty cell is an error | `id` |
 | `name?` | optional, empty cells are allowed | `name` |
 
-Unmarked headers use `-r/--required`. Empty values produce `0`, `false`, `""`, or `null` (for composite types).
+Unmarked headers use `-r/--required-by-default`. Empty values produce `0`, `false`, `""`, or `null` (for composite types).
 
 ### Type matching (type-level ! / ?)
 
@@ -238,14 +239,14 @@ output [[1,"a",10],[2,"b",20]]
 
 Validators: `gt`, `gte`, `lt`, `lte`, `between`, `eq`, `ne`, `positive`, `negative`, `nonzero`, `multipleof`, `len`, `minlen`, `maxlen`, `email`, `phone`, `phone(e164)`, `url`, `uuid`, `regex`, `prefix`, `suffix`, `contains`, `alpha`, `alnum`, `numeric`, `oneof`/`in`, `notoneof`/`notin`, `unique`, `nonempty`, `ref(package.column)`, `after`, `before`, plus the nestable combinators `and(...)`, `or(...)`, `not(...)`, and the `pad` directive for fixed arrays.
 
-`ref(package.column)` uses the final output JSON filename stem (computed from `--name-tpl`) as `package`, with `.json` optional; it falls back to the sheet name. With `--merge`, the sheet name is used.
+`ref(package.column)` uses the target sheet's final output JSON filename stem (computed from `--name-tpl`) as `package`; `.json` is optional. The Excel sheet name is never used implicitly. With the default template `{file}_{sheet}` write `ref(data_item.id)`; with `--name-tpl '{sheet}'` write `ref(item.id)`.
 
 ```text
 string:or(and(email,len(6,64)), and(phone,len(11,15)))
 string:not(or(regex(^test_), oneof("admin","root")))
 ```
 
-`not(a,b,c)` means `NOT (a AND b AND c)`. String arguments containing `,` `;` `:` `(` `)` must be quoted. `pad` only applies to `[N]T` and fills missing elements with the element zero value or an explicit value before validation.
+Combinators applied to an array are evaluated against the array as a whole; scalar validators written directly in a rule are applied per element. `not(a,b,c)` means `NOT (a AND b AND c)`. String arguments containing `,` `;` `:` `(` `)` must be quoted. `pad` only applies to `[N]T` and fills missing elements with the element zero value or an explicit value before validation.
 
 ### types.yaml
 
@@ -274,14 +275,43 @@ Use `itemId` / `items` in the type row, just like built-in types; `#itemId` is a
 - **Parallel processing**: files are processed concurrently (up to `2 × CPU cores`)
 - **Prefix exclusion**: use `-x` (prefix match) to skip sheets & columns; repeatable
 - **Strong typing**: Go-style types, JSONPath selectors, validators, conditional types, `pad`, `ref`, and `types.yaml` reuse (`-t`, `-r`, `--types`)
-- **Smart cell parsing**: JSON strings inside cells are deserialised in-place (`--cell-json`)
-- **All-string mode**: disable all parsing, output raw strings (`--all-string`)
-- **Field name lowercasing**: `--lowcase` for case-insensitive consumers
+- **Smart cell parsing**: JSON strings inside cells are deserialised in-place (`--parse-cell-json`)
+- **Stringify mode**: output untyped columns as raw strings (`--stringify-all`)
+- **Field name lowercasing**: `--lowercase` for case-insensitive consumers
 - **Number de-dotting**: `88.0` → `88`, `3.14` → `3.14`
 - **Floating-point precision fix**: values like `15699.999999999998` auto-rounded to `15700`
-- **Empty-cell defaults**: empty cells use the inferred type default (`0` for numbers, `""` for strings)
-- **Encoding**: UTF-8 without BOM (default)
+- **Empty-cell defaults**: typed columns emit their zero value (`0`, `""`, `false`, `null`)
+- **Encoding**: UTF-8 without BOM by default; `utf8-bom`, `gbk` and `gb18030` are supported
 - **.xls support**: old BIFF / WPS files are read via [grate](https://github.com/pbnjay/grate), no external tools required
+
+---
+
+## Project layout
+
+```text
+cmd/excel2json        CLI entry point
+internal/core         options, sheets, naming helpers
+internal/typing       type parsing and value conversion
+internal/jsonpath     RFC 9535 JSONPath subset
+internal/schema       annotations, validators, types.yaml
+internal/excel        .xlsx / .xls reader
+internal/convert      conversion engine and ref checks
+internal/export       JSON / CSV output
+internal/app          CLI and orchestration
+```
+
+## Development
+
+```bash
+make build      # build ./excel2json
+make test       # go test ./...
+make race       # go test -race ./...
+make cover      # coverage
+make vet        # go vet ./...
+make lint       # golangci-lint
+```
+
+Requires Go 1.25+.
 
 ---
 
@@ -291,9 +321,10 @@ Use `itemId` / `items` in the type row, just like built-in types; `#itemId` is a
 - [grate](https://github.com/pbnjay/grate) — XLS (BIFF) reading
 - [cobra](https://github.com/spf13/cobra) — CLI framework
 - [errgroup](https://pkg.go.dev/golang.org/x/sync/errgroup) — concurrent processing
+- [yaml.v3](https://gopkg.in/yaml.v3) — types.yaml parsing
 
 ---
 
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE).

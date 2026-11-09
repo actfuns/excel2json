@@ -50,7 +50,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           suffix="${{ matrix.binary-suffix || '' }}"
-          go build -o excel2json${suffix} .
+          go build -o excel2json${suffix} ./cmd/excel2json
 
       - name: Smoke test
         shell: bash

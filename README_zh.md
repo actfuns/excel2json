@@ -9,7 +9,7 @@ Go 语言重写的 [excel2json](https://github.com/neil3d/excel2json) C# 工具�
 ## 安装
 
 ```bash
-go install github.com/actfuns/excel2json@latest
+go install github.com/actfuns/excel2json/cmd/excel2json@latest
 ```
 
 或从源码编译：
@@ -17,7 +17,7 @@ go install github.com/actfuns/excel2json@latest
 ```bash
 git clone https://github.com/actfuns/excel2json.git
 cd excel2json
-go build -o excel2json .
+go build -o excel2json ./cmd/excel2json   # or: make build
 ```
 
 ---
@@ -26,6 +26,7 @@ go build -o excel2json .
 
 ```bash
 excel2json [options] <输入文件或目录...> [-o <路径>] [-f json|csv]
+excel2json --version
 ```
 
 输入可以是文件路径或目录（目录会自动收集所有 `.xls`/`.xlsx` 文件）。
@@ -46,24 +47,22 @@ excel2json data.xlsx -p
 excel2json data.xlsx -o ./output/
 
 # 合并所有 sheet 到一个文件
-excel2json data.xlsx -o out.json -m
+excel2json data.xlsx -o out.json
 
 # 使用自定义列作为字典 key
 excel2json data.xlsx -k cs_id
 
-# 跳过前 2 行开始读数据
-excel2json data.xlsx -s 2
+# 指定数据起始行（索引 2；默认 -1 = 自动）
+excel2json data.xlsx --data-row 2
 
 # 排除指定前缀的 sheet 和列
 excel2json data.xlsx -x S_ -x cs_
 
 # 自定义输出文件名
-excel2json data.xlsx --name file              # 只用文件名
-excel2json data.xlsx --name sheet             # 只用 sheet 名
 excel2json data.xlsx --name-tpl 'my_{file}_{sheet}'  # 自定义模板
 
 # 强类型列（类型行 = 第 2 行，数据从第 3 行开始）
-excel2json data.xlsx -t 1 -s 2 --required
+excel2json data.xlsx -t 1 --required-by-default
 ```
 
 ### 选项
@@ -74,25 +73,27 @@ excel2json data.xlsx -t 1 -s 2 --required
 | `-o` | `--out` | `""` | 输出路径（文件或目录） |
 | `-f` | `--format` | `json` | 输出格式：`json` 或 `csv` |
 | | | **数据解析** |
-| `-n` | `--name-row` | `0` | 列名所在行号（从 0 开始） |
+| `-n` | `--header-row` | `0` | 列名所在行号（从 0 开始） |
 | `-t` | `--type-row` | `-1` | 类型注释所在行号（-1 禁用） |
-| `-r` | `--required` | `false` | 表头未加 `!`/`?` 标记的字段默认必填（空单元格报错） |
-| `-s` | `--skip-rows` | `1` | 数据前跳过的行数 |
-| `-e` | `--encoding` | `utf8-nobom` | 输出文件编码 |
+| `-r` | `--required-by-default` | `false` | 表头未加 `!`/`?` 标记的字段默认必填（空单元格报错） |
+| `-s` | `--data-row` | `-1` | 数据起始行号（0 开始，-1 = 自动） |
+| `-e` | `--encoding` | `utf8-nobom` | 文件输出编码：`utf8`、`utf8-nobom`、`utf8-bom`、`gbk`、`gb18030` |
 | `-d` | `--date-format` | `yyyy/MM/dd` | 日期格式字符串 |
 | | | **字段处理** |
-| `-l` | `--lowcase` | `false` | 字段名转小写 |
+| `-l` | `--lowercase` | `false` | 字段名转小写 |
 | `-x` | `--exclude` | `nil` | 跳过指定前缀的 sheet 和列（可重复） |
-| | `--cell-json` | `false` | 解析单元格中的 JSON 字符串 |
-| | `--all-string` | `false` | 全部输出为字符串 |
+| | `--parse-cell-json` | `false` | 解析无类型列单元格中的 JSON 字符串 |
+| | `--stringify-all` | `false` | 无类型列全部输出为字符串 |
 | | `--types` | `""` | types.yaml / types.yml 路径（省略时自动查找） |
 | | | **输出格式** |
-| `-a` | `--array` | `false` | 导出为数组（默认以第一列值为 key） |
-| `-m` | `--merge` | `false` | 合并所有 sheet 到一个文件（默认拆分） |
-| | `--name-tpl` | `{file}_{sheet}` | 输出文件名模板，支持 `{file}` `{sheet}` |
-| | `--name` | `""` | 文件名预设：`both`, `file`, `sheet` |
+| | `--list` | `false` | JSON 导出为数组（默认以第一列值为 key） |
+| `-m` | `--merge-sheets` | `false` | 合并所有 sheet 到一个文件（JSON 对象或 CSV 分段） |
+| | `--name-tpl` | `{file}_{sheet}` | 拆分输出文件名模板，支持 `{file}` `{sheet}`（JSON 和 CSV） |
 | `-p` | `--pretty` | `false` | JSON 美化输出（Tab 缩进） |
 | `-k` | `--key` | `""` | 用作字典 key 的列名（默认第一列） |
+| | `--unique-keys` | `false` | 字典 key 重复或为空时报错（默认后者覆盖前者） |
+
+行号参数（`--header-row`、`--type-row`、`--data-row`）按 Excel 实际行号计算（0 开始）。中间空行会保留用于定位表头/类型行，数据区空行会跳过。`--data-row=-1` 表示取表头/类型行之后的第一行。
 
 ---
 
@@ -100,7 +101,7 @@ excel2json data.xlsx -t 1 -s 2 --required
 
 ### JSON — 字典模式（默认）
 
-每行以第一列值为 key：
+每行以第一列值为 key。默认重复 key 后面覆盖前面；加 `--unique-keys` 才会报错。需要保留所有行时用 `--list` 导出数组：
 
 ```json
 {
@@ -144,9 +145,11 @@ excel2json data.xlsx -t 1 -s 2 --required
 
 | 输入 | 无 `-o` | `-o <文件>` | `-o <目录>/` |
 |---|---|---|---|
-| 单个文件 | stdout | 写入文件 | `{目录}/{文件名}.{格式}` |
-| 多个文件 | stdout（依次） | 当作目录 | `{目录}/{文件名}.{格式}` |
+| 单个文件 | stdout | 写入单个文件（多 sheet 自动包装/分段） | 按 sheet 拆分，或 `--merge-sheets` 合并为 `{目录}/{文件名}.{格式}` |
+| 多个文件 | stdout（依次） | 当作目录 | 按 sheet 拆分，或 `--merge-sheets` 合并 |
 | 目录 | stdout（依次） | 当作目录 | 同上 |
+
+`-o <文件>` 表示「一个输出文件」，多个 sheet 时会合并。没有扩展名的路径（如 `-o out/conf`）或以 `/` 结尾的路径视为目录；目录默认拆分，`--merge-sheets` 才合并。
 
 ---
 
@@ -163,18 +166,18 @@ excel2json data.xlsx -t 1 -s 2 --required
 
 复合类型要求单元格内容为合法 JSON，例如 `[1,2,3]` 或 `{"a":"b"}`。数组长度、元素类型、数值范围、map 的 key 和 value 都会校验。
 
-`any` / `interface{}` 保持旧的自动解析行为：自动识别数字，只有加 `--cell-json` 才解析 JSON。`date` 解析失败时会原样输出字符串。
+`any` / `interface{}` 保持旧的自动解析行为：自动识别数字，只有加 `--parse-cell-json` 才解析 JSON。`date` 解析失败时会原样输出字符串。
 
 ### 必填 / 可空（表头）
 
-空值只由表头标记或 `--required` 决定：
+空值只由表头标记或 `--required-by-default` 决定：
 
 | 表头 | 含义 | 输出 key |
 |---|---|---|
 | `id!` | 必填，空单元格报错 | `id` |
 | `name?` | 可空，允许空单元格 | `name` |
 
-不加标记时使用 `-r/--required` 的全局默认值。空值输出 `0`、`false`、`""`，复合类型输出 `null`。
+不加标记时使用 `-r/--required-by-default` 的全局默认值。空值输出 `0`、`false`、`""`，复合类型输出 `null`。
 
 ### 类型匹配（类型上的 ! / ?）
 
@@ -255,6 +258,7 @@ string:not(or(regex(^test_), oneof("admin","root")))
 ```
 
 - 顶层 `,` 就是 AND，`and(...)` 可省略；嵌套在 `or(...)` 内时仍可用 `and(...)` 分组。
+- 组合器作用于数组时按整体计算；直接写在规则里的标量校验器才会逐元素执行。
 - `not(a,b,c)` = `NOT (a AND b AND c)`。
 - 字符串参数含 `,` `;` `:` `(` `)` 时用引号包裹。
 
@@ -274,11 +278,11 @@ string:not(or(regex(^test_), oneof("admin","root")))
 `ref(package.column)` 校验当前值存在于指定输出包（sheet 对应的 JSON 文件）的指定列：
 
 ```text
-int:ref(items.id)
+int:ref(items.id)          # 目标 sheet 的输出名为 items
 $[*][1::3]:string:ref(item.id)
 ```
 
-`ref(...)` 的第一段是**最终输出 JSON 的文件名**（不含 `.json`），由 `--name-tpl` 计算；找不到时会回退匹配 sheet 名。`--merge` 模式下使用 sheet 名。被引用列会按自身类型转换后比较；拆分导出时仍能看到同一工作簿的其它 sheet。
+`ref(...)` 的第一段是**该 sheet 最终输出 JSON 的文件名**（不含 `.json`），由 `--name-tpl` 计算，不使用 Excel sheet 名。例如默认模板 `{file}_{sheet}` 时写 `ref(data_item.id)`；用 `--name-tpl '{sheet}'` 时才写 `ref(item.id)`。被引用列会按自身类型转换后比较。
 
 ### types.yaml 复用
 
@@ -313,14 +317,43 @@ types:
 - **并行处理**：文件并发处理（上限 `2 × CPU 核心数`）
 - **前缀排除**：使用 `-x`（前缀匹配）跳过 sheet 和列；可重复使用
 - **强类型注解**：Go 风格类型、JSONPath 选择器、校验器、条件类型、`pad`、`ref`、`types.yaml` 复用（`-t`、`-r`、`--types`）
-- **智能单元格解析**：单元格中的 JSON 字符串自动反序列化（`--cell-json`）
-- **全字符串模式**：关闭所有解析，输出原始字符串（`--all-string`）
+- **智能单元格解析**：单元格中的 JSON 字符串自动反序列化（`--parse-cell-json`）
+- **全字符串模式**：无类型列输出原始字符串（`--stringify-all`）
 - **字段名小写**：`-l` 转小写
 - **数值去零**：`88.0` → `88`，`3.14` → `3.14`
 - **浮点精度修正**：`15699.999999999998` 自动归整为 `15700`
-- **空值默认值**：以同列第一个非空值推断类型（数值→`0`，字符串→`""`）
-- **编码**：默认 UTF-8 无 BOM
+- **空值默认值**：按列类型输出零值（数值→`0`，字符串→`""`，布尔→`false`，复合类型→`null`）
+- **编码**：默认 UTF-8 无 BOM，支持 `utf8-bom`、`gbk`、`gb18030`
 - **.xls 支持**：通过 [grate](https://github.com/pbnjay/grate) 读取旧版 BIFF / WPS 文件
+
+---
+
+## 项目结构
+
+```text
+cmd/excel2json        CLI 入口
+internal/core         Options、Sheet、命名工具
+internal/typing       类型解析与值转换
+internal/jsonpath     RFC 9535 JSONPath 子集
+internal/schema       注解、校验器、types.yaml
+internal/excel        .xlsx / .xls 读取
+internal/convert      转换引擎与 ref
+internal/export       JSON / CSV 输出
+internal/app          CLI 与运行编排
+```
+
+## 开发
+
+```bash
+make build      # 构建 ./excel2json
+make test       # go test ./...
+make race       # go test -race ./...
+make cover      # 覆盖率
+make vet        # go vet ./...
+make lint       # golangci-lint
+```
+
+依赖：Go 1.25+。
 
 ---
 
@@ -330,9 +363,10 @@ types:
 - [grate](https://github.com/pbnjay/grate) — XLS (BIFF) 读取
 - [cobra](https://github.com/spf13/cobra) — CLI 框架
 - [errgroup](https://pkg.go.dev/golang.org/x/sync/errgroup) — 并发控制
+- [yaml.v3](https://gopkg.in/yaml.v3) — types.yaml 解析
 
 ---
 
 ## 许可证
 
-MIT
+MIT，见 [LICENSE](LICENSE)。
