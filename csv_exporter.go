@@ -17,7 +17,7 @@ import (
 //   - Multiple sheets → auto-directory: if the path looks like a file path,
 //     it's used as a stem and multiple files are created alongside it.
 func exportCSV(sheets []Sheet, opts Options, outPath string) error {
-	exp := NewExporter(opts)
+	exp := NewExporterWithSheets(opts, sheets)
 	valid := exp.FilterSheets(sheets)
 	if len(valid) == 0 {
 		return fmt.Errorf("no valid sheets to export")

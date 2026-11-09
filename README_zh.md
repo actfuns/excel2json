@@ -76,7 +76,7 @@ excel2json data.xlsx -t 1 -s 2 --required
 | | | **数据解析** |
 | `-n` | `--name-row` | `0` | 列名所在行号（从 0 开始） |
 | `-t` | `--type-row` | `-1` | 类型注释所在行号（-1 禁用） |
-| `-r` | `--required` | `false` | 未加 `?`/`!` 标记的类型默认必填（空单元格报错） |
+| `-r` | `--required` | `false` | 表头未加 `!`/`?` 标记的字段默认必填（空单元格报错） |
 | `-s` | `--skip-rows` | `1` | 数据前跳过的行数 |
 | `-e` | `--encoding` | `utf8-nobom` | 输出文件编码 |
 | `-d` | `--date-format` | `yyyy/MM/dd` | 日期格式字符串 |
@@ -85,6 +85,7 @@ excel2json data.xlsx -t 1 -s 2 --required
 | `-x` | `--exclude` | `nil` | 跳过指定前缀的 sheet 和列（可重复） |
 | | `--cell-json` | `false` | 解析单元格中的 JSON 字符串 |
 | | `--all-string` | `false` | 全部输出为字符串 |
+| | `--types` | `""` | types.yaml / types.yml 路径（省略时自动查找） |
 | | | **输出格式** |
 | `-a` | `--array` | `false` | 导出为数组（默认以第一列值为 key） |
 | `-m` | `--merge` | `false` | 合并所有 sheet 到一个文件（默认拆分） |
@@ -164,23 +165,146 @@ excel2json data.xlsx -t 1 -s 2 --required
 
 `any` / `interface{}` 保持旧的自动解析行为：自动识别数字，只有加 `--cell-json` 才解析 JSON。`date` 解析失败时会原样输出字符串。
 
-### 必填 / 可空
+### 必填 / 可空（表头）
 
-| 类型写法 | 含义 |
+空值只由表头标记或 `--required` 决定：
+
+| 表头 | 含义 | 输出 key |
+|---|---|---|
+| `id!` | 必填，空单元格报错 | `id` |
+| `name?` | 可空，允许空单元格 | `name` |
+
+不加标记时使用 `-r/--required` 的全局默认值。空值输出 `0`、`false`、`""`，复合类型输出 `null`。
+
+### 类型匹配（类型上的 ! / ?）
+
+类型后面的 `!` / `?` 只控制**类型匹配**，不控制空值：
+
+| 写法 | 含义 |
 |---|---|
-| `T` | 使用全局默认值（由 `--required` 决定） |
-| `T!` | 必填：空单元格报错 |
-| `T?` | 可空：允许空单元格 |
-
-未加标记的类型默认可空。加 `-r/--required` 后，未加标记的类型默认必填；显式 `?` 和 `!` 优先级更高。标记作用于整个字段类型，不作用于数组元素或 map 的 value。
-
-可空类型遇到空单元格时输出 `0`、`false`、`""`，复合类型输出 `null`；`?` 只放宽空值校验，不改变空值输出。未知类型和非法值都会报错，并带上 sheet、行、列信息。
+| `int` / `int!` | 必须是 int，不匹配报错 |
+| `int?` | 只有当值是 int 时才执行这条规则的校验；不是 int 就跳过 |
 
 ```text
-第 1 行（列名）: id    tags      attrs
-第 2 行（类型）: int   [3]int!   map[string]string?
-第 3 行（数据）: 1     [1,2,3]   {"a":"b"}
+id!                        # 字段必填
+name?                      # 字段可空
+
+int:lt(1)                  # 必须是 int，且 <1
+int?:lt(1)                 # 只有值是 int 时才校验 <1
+int?:lt(1);string?:minlen(1)
 ```
+
+### 校验规则
+
+```ebnf
+fieldSpec = rule { ";" rule }
+rule      = [ selector ":" ] [ type [ "!" | "?" ] [ ":" checks ] ]
+checks    = check { "," check }
+```
+
+| 语法 | 含义 |
+|---|---|
+| `,` | 多条校验同时满足（AND） |
+| `;` | 多条规则同时生效（AND，选择器允许重叠） |
+| `!` | 类型必须匹配（默认行为，显式写更清楚） |
+| `?` | 只有值匹配该类型时才执行这条规则；不匹配则跳过 |
+| 选择器省略 | 作用于字段本身 |
+| 类型省略 | 按选择器产出的元素原值校验 |
+
+选择器是 RFC 9535 JSONPath 的子集，支持 `$`、`.field`、`['field']`/`["field"]`、`[0]`、`[-1]`、`[*]`、`[start:stop:step]`、`[i,j,k]`、`..field`。多匹配按标准 nodelist 语义**扁平拼接**。
+
+```text
+int:gt(0),lt(100)
+int?:lt(1);string?:minlen(1)
+$[*][1::3]:string:ref(item.id)
+$[0]:int:gte(0);$[2]:int32:gt(0)
+[4]int32:pad,gte(0)
+```
+
+- 选择器只负责**定位**规则要校验的值，不是输出选择器；输出始终是整个字段。
+- 所有规则都**原位写回**：选中的节点按规则转换后写回原结构，未选中的部分保持原样。
+- 规则按书写顺序执行；重叠位置以后面的规则为准。
+- 条件类型 `?` 命中后校验失败仍然报错；未命中则该规则跳过。
+- 选择器无匹配时按标准 JSONPath 返回空结果，不报错。
+
+```text
+输入 [[1,"a",10.0],[2,"b",20.0]]
+规则 $[*][2::3]:int
+输出 [[1,"a",10],[2,"b",20]]
+```
+
+数组上的标量校验器（`gt`、`len` 之外的字符串/数值校验、`ref` 等）自动作用于**每个元素**；`len`、`minlen`、`maxlen`、`unique`、`nonempty` 作用于整个集合。
+
+### 校验器
+
+| 分类 | 校验器 |
+|---|---|
+| 数值 | `gt(n)`、`gte(n)`、`lt(n)`、`lte(n)`、`between(min,max)`、`eq(v)`、`ne(v)`、`positive`、`negative`、`nonzero`、`multipleof(n)` |
+| 字符串 | `len(n)`、`len(min,max)`、`minlen(n)`、`maxlen(n)`、`email`、`phone`、`phone(e164)`、`url`、`uuid`、`regex(pattern)`、`prefix(s)`、`suffix(s)`、`contains(s)`、`alpha`、`alnum`、`numeric` |
+| 枚举 | `oneof(a,b,c)` / `in(...)`、`notoneof(...)` / `notin(...)` |
+| 集合 | `len(n)`、`len(min,max)`、`unique`、`nonempty` |
+| 引用 / 日期 | `ref(sheet.column)`、`after(date)`、`before(date)` |
+| 组合器 | `and(...)`、`or(...)`、`not(...)` |
+| 指令 | `pad` / `pad(value)`（仅固定长度数组） |
+
+组合器可任意嵌套：
+
+```text
+string:or(and(email,len(6,64)), and(phone,len(11,15)))
+string:not(or(regex(^test_), oneof("admin","root")))
+```
+
+- 顶层 `,` 就是 AND，`and(...)` 可省略；嵌套在 `or(...)` 内时仍可用 `and(...)` 分组。
+- `not(a,b,c)` = `NOT (a AND b AND c)`。
+- 字符串参数含 `,` `;` `:` `(` `)` 时用引号包裹。
+
+### pad（固定数组补位）
+
+`pad` 只适用于 `[N]T`：
+
+```text
+[4]int32:pad,gte(0)     # [1,2] -> [1,2,0,0]
+[3]int:pad(7)           # [1]   -> [1,7,7]
+```
+
+不足补元素零值（或指定值），超过长度报错，补位后再执行其余校验。
+
+### ref（外键存在性）
+
+`ref(package.column)` 校验当前值存在于指定输出包（sheet 对应的 JSON 文件）的指定列：
+
+```text
+int:ref(items.id)
+$[*][1::3]:string:ref(item.id)
+```
+
+`ref(...)` 的第一段是**最终输出 JSON 的文件名**（不含 `.json`），由 `--name-tpl` 计算；找不到时会回退匹配 sheet 名。`--merge` 模式下使用 sheet 名。被引用列会按自身类型转换后比较；拆分导出时仍能看到同一工作簿的其它 sheet。
+
+### types.yaml 复用
+
+推荐 YAML：
+
+```yaml
+types:
+  itemId: "int:gt(0),ref(items.id)"
+  items: "$[*][1::3]:string:ref(item.id)"
+```
+
+也支持列表形式：
+
+```yaml
+types:
+  - name: itemId
+    format: "int:gt(0),ref(items.id)"
+```
+
+类型行直接写 `itemId` / `items` 即可，和内置类型一样使用；`#itemId` 也兼容。加载顺序：
+
+1. `--types <path>` 显式指定
+2. 输入文件同目录的 `types.yaml` / `types.yml`
+3. 当前目录的 `types.yaml` / `types.yml`
+
+命名类型必须作为整条注解使用，并检测循环引用。名字不能和内置类型冲突（如 `int`、`list`）。
 
 ---
 
@@ -188,7 +312,7 @@ excel2json data.xlsx -t 1 -s 2 --required
 
 - **并行处理**：文件并发处理（上限 `2 × CPU 核心数`）
 - **前缀排除**：使用 `-x`（前缀匹配）跳过 sheet 和列；可重复使用
-- **强类型注解**：支持 Go 风格基础类型、数组/切片/map，以及数值范围校验和 `!`/`?` 必填标记（`-t`、`-r`）
+- **强类型注解**：Go 风格类型、JSONPath 选择器、校验器、条件类型、`pad`、`ref`、`types.yaml` 复用（`-t`、`-r`、`--types`）
 - **智能单元格解析**：单元格中的 JSON 字符串自动反序列化（`--cell-json`）
 - **全字符串模式**：关闭所有解析，输出原始字符串（`--all-string`）
 - **字段名小写**：`-l` 转小写

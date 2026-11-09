@@ -158,26 +158,34 @@ func LoadExcel(filePath string, opts Options) ([]Sheet, error) {
 			continue
 		}
 
+		hasTypes := typeRow >= 0 && typeRow < len(rows) && typeRow > nameRow
+
 		// --- column names from nameRow ---
 		headers := make([]string, maxCols)
+		required := make([]*bool, maxCols)
 		for i := range headers {
 			headers[i] = fmt.Sprintf("col_%d", i)
 		}
 		if nameRow >= 0 && nameRow < len(rows) {
 			for ci, val := range rows[nameRow] {
 				if v := strings.TrimSpace(val); v != "" && ci < len(headers) {
-					headers[ci] = v
+					if hasTypes {
+						name, req := splitFieldMarker(v)
+						headers[ci] = name
+						required[ci] = req
+					} else {
+						headers[ci] = v
+					}
 				}
 			}
 		}
 
 		// --- type annotations from typeRow ---
 		types := make([]string, maxCols)
-		hasTypes := typeRow >= 0 && typeRow < len(rows) && typeRow > nameRow
 		if hasTypes {
 			for ci, val := range rows[typeRow] {
 				if v := strings.TrimSpace(val); v != "" && ci < len(types) {
-					types[ci] = strings.ToLower(v)
+					types[ci] = v
 				}
 			}
 		}
@@ -208,10 +216,11 @@ func LoadExcel(filePath string, opts Options) ([]Sheet, error) {
 		}
 
 		sheets = append(sheets, Sheet{
-			Name:    rs.Name,
-			Headers: headers,
-			Types:   types,
-			Rows:    dataRows,
+			Name:     rs.Name,
+			Headers:  headers,
+			Types:    types,
+			Required: required,
+			Rows:     dataRows,
 		})
 	}
 

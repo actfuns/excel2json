@@ -178,6 +178,70 @@ func TestRunOutputs(t *testing.T) {
 	}
 }
 
+func TestRunWithTypesYAMLAutoDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "types.yaml"), []byte(`
+types:
+  items: "$[*][1::3]:string"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f := excelize.NewFile()
+	rows := [][]any{
+		{"id", "items"},
+		{"int", "items"},
+		{"1", `[["w1","i1",10],["w2","i2",20]]`},
+	}
+	for i, r := range rows {
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetSheetRow("Sheet1", cell, &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workbook := filepath.Join(dir, "typed.xlsx")
+	if err := f.SaveAs(workbook); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := Options{
+		NameRow:     0,
+		TypeRow:     1,
+		SkipRows:    2,
+		ExportArray: true,
+		Format:      "json",
+		NameTmpl:    "{file}_{sheet}",
+		OutputPath:  filepath.Join(dir, "out.json"),
+	}
+	if err := run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(dir, "typed_Sheet1.json"), `[{"id":1,"items":[["w1","i1",10],["w2","i2",20]]}]`)
+}
+
+func TestValidationFixture(t *testing.T) {
+	fixture := filepath.Join("testdata", "validation", "validation.xlsx")
+	outDir := t.TempDir()
+
+	opts := Options{
+		NameRow:     0,
+		TypeRow:     1,
+		SkipRows:    2,
+		ExportArray: true,
+		Format:      "json",
+		NameTmpl:    "{sheet}",
+		OutputPath:  outDir,
+	}
+	if err := run([]string{fixture}, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFile(t, filepath.Join(outDir, "main.json"),
+		`[{"fixed":[1,2,0,0],"id":1,"items":[["w1","i1",10],["w2","i2",20]],"kind":"ab","level":1,"packed":[5,"x",2],"refItem":"i1","score":0,"single":{"a":7,"b":"keep"}}]`)
+	assertFile(t, filepath.Join(outDir, "item.json"),
+		`[{"id":"i1","name":"Sword"},{"id":"i2","name":"Shield"}]`)
+}
+
 func TestWriteJSONStdout(t *testing.T) {
 	old := os.Stdout
 	r, w, err := os.Pipe()

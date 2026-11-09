@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -158,7 +159,7 @@ func TestLoadExcelTypesAndPadding(t *testing.T) {
 	if len(sheet.Rows) != 1 || len(sheet.Rows[0]) != 3 || sheet.Rows[0][2] != "" {
 		t.Fatalf("row padding = %v", sheet.Rows)
 	}
-	wantTypes := []string{"int", "[]string", "uint"}
+	wantTypes := []string{"INT", "[]STRING", "UINT"}
 	for i, want := range wantTypes {
 		if sheet.Types[i] != want {
 			t.Errorf("Types[%d] = %q, want %q", i, sheet.Types[i], want)
@@ -172,6 +173,72 @@ func TestLoadExcelTypesAndPadding(t *testing.T) {
 	b, _ := json.Marshal(v)
 	if want := `[{"Extra":0,"ID":1,"Value":["a"]}]`; string(b) != want {
 		t.Errorf("converted = %s, want %s", b, want)
+	}
+}
+
+func TestHeaderRequiredMarkers(t *testing.T) {
+	f := excelize.NewFile()
+	rows := [][]any{
+		{"id!", "name?", "plain"},
+		{"int", "string", "int"},
+		{"1", "x", "2"},
+	}
+	for i, r := range rows {
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetSheetRow("Sheet1", cell, &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "markers.xlsx")
+	if err := f.SaveAs(path); err != nil {
+		t.Fatal(err)
+	}
+
+	sheets, err := LoadExcel(path, Options{NameRow: 0, TypeRow: 1, SkipRows: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sheet := sheets[0]
+	if want := []string{"id", "name", "plain"}; !reflect.DeepEqual(sheet.Headers, want) {
+		t.Errorf("Headers = %v, want %v", sheet.Headers, want)
+	}
+	if len(sheet.Required) != 3 {
+		t.Fatalf("Required length = %d", len(sheet.Required))
+	}
+	if sheet.Required[0] == nil || !*sheet.Required[0] {
+		t.Errorf("id! should be required")
+	}
+	if sheet.Required[1] == nil || *sheet.Required[1] {
+		t.Errorf("name? should be nullable")
+	}
+	if sheet.Required[2] != nil {
+		t.Errorf("plain should not have a marker")
+	}
+}
+
+func TestHeaderMarkersIgnoredWithoutTypeRow(t *testing.T) {
+	f := excelize.NewFile()
+	rows := [][]any{
+		{"id!", "name?"},
+		{"1", "x"},
+	}
+	for i, r := range rows {
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetSheetRow("Sheet1", cell, &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "untyped_markers.xlsx")
+	if err := f.SaveAs(path); err != nil {
+		t.Fatal(err)
+	}
+
+	sheets, err := LoadExcel(path, Options{NameRow: 0, TypeRow: -1, SkipRows: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"id!", "name?"}; !reflect.DeepEqual(sheets[0].Headers, want) {
+		t.Errorf("Headers = %v, want %v", sheets[0].Headers, want)
 	}
 }
 

@@ -34,7 +34,8 @@ const (
 //	[]T  [N]T  map[K]V
 //	额外支持: date（日期）, float（float64 别名）, object（map[string]any 别名）, list（[]any 别名）
 //
-// 类型末尾可加空值标记：T! 表示必填，T? 表示可空；不加则由 --required 决定。
+// parseType 仍支持末尾的 !/? 标记（直接调用时作为空值/必填语义），
+// 但在字段注解中 !/? 由 annotation 层处理为类型严格/条件匹配。
 type goType struct {
 	kind     typeKind
 	name     string // original name for scalar types
@@ -193,52 +194,53 @@ func isTypeIdentChar(c byte) bool {
 }
 
 func basicType(name string) (*goType, error) {
-	switch name {
+	canonical := strings.ToLower(name)
+	switch canonical {
 	case "any":
-		return &goType{kind: kindAny, name: name}, nil
+		return &goType{kind: kindAny, name: canonical}, nil
 	case "bool":
-		return &goType{kind: kindBool, name: name}, nil
+		return &goType{kind: kindBool, name: canonical}, nil
 	case "string":
-		return &goType{kind: kindString, name: name}, nil
+		return &goType{kind: kindString, name: canonical}, nil
 	case "date":
-		return &goType{kind: kindDate, name: name}, nil
+		return &goType{kind: kindDate, name: canonical}, nil
 	case "object":
 		return &goType{
 			kind: kindMap,
-			name: name,
+			name: canonical,
 			key:  &goType{kind: kindString, name: "string"},
 			elem: &goType{kind: kindAny, name: "any"},
 		}, nil
 	case "list":
 		return &goType{
 			kind: kindSlice,
-			name: name,
+			name: canonical,
 			elem: &goType{kind: kindAny, name: "any"},
 		}, nil
 	case "int":
-		return &goType{kind: kindInt, name: name, bits: 64}, nil
+		return &goType{kind: kindInt, name: canonical, bits: 64}, nil
 	case "int8":
-		return &goType{kind: kindInt, name: name, bits: 8}, nil
+		return &goType{kind: kindInt, name: canonical, bits: 8}, nil
 	case "int16":
-		return &goType{kind: kindInt, name: name, bits: 16}, nil
+		return &goType{kind: kindInt, name: canonical, bits: 16}, nil
 	case "int32", "rune":
-		return &goType{kind: kindInt, name: name, bits: 32}, nil
+		return &goType{kind: kindInt, name: canonical, bits: 32}, nil
 	case "int64":
-		return &goType{kind: kindInt, name: name, bits: 64}, nil
+		return &goType{kind: kindInt, name: canonical, bits: 64}, nil
 	case "uint":
-		return &goType{kind: kindUint, name: name, bits: 64}, nil
+		return &goType{kind: kindUint, name: canonical, bits: 64}, nil
 	case "uint8", "byte":
-		return &goType{kind: kindUint, name: name, bits: 8}, nil
+		return &goType{kind: kindUint, name: canonical, bits: 8}, nil
 	case "uint16":
-		return &goType{kind: kindUint, name: name, bits: 16}, nil
+		return &goType{kind: kindUint, name: canonical, bits: 16}, nil
 	case "uint32":
-		return &goType{kind: kindUint, name: name, bits: 32}, nil
+		return &goType{kind: kindUint, name: canonical, bits: 32}, nil
 	case "uint64", "uintptr":
-		return &goType{kind: kindUint, name: name, bits: 64}, nil
+		return &goType{kind: kindUint, name: canonical, bits: 64}, nil
 	case "float", "float64":
-		return &goType{kind: kindFloat, name: name, bits: 64}, nil
+		return &goType{kind: kindFloat, name: canonical, bits: 64}, nil
 	case "float32":
-		return &goType{kind: kindFloat, name: name, bits: 32}, nil
+		return &goType{kind: kindFloat, name: canonical, bits: 32}, nil
 	default:
 		return nil, fmt.Errorf("unsupported type %q", name)
 	}

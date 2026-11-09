@@ -10,8 +10,15 @@ import (
 // - Single sheet: output is the raw array/object.
 // - Multiple sheets: output is {"SheetName": <value>, ...}.
 func ExportJSON(sheets []Sheet, opts Options) (string, error) {
-	exp := NewExporter(opts)
-	valid := exp.FilterSheets(sheets)
+	return ExportJSONWithContext(sheets, sheets, opts)
+}
+
+// ExportJSONWithContext serialises exportSheets while exposing every sheet in
+// context to ref(...) checks. This lets split exports still validate foreign
+// keys against sheets written to other files.
+func ExportJSONWithContext(exportSheets, context []Sheet, opts Options) (string, error) {
+	exp := NewExporterWithSheets(opts, context)
+	valid := exp.FilterSheets(exportSheets)
 
 	if len(valid) == 0 {
 		return "", fmt.Errorf("no valid sheets to export")

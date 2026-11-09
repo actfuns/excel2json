@@ -76,7 +76,7 @@ func init() {
 	rootCmd.Flags().StringArrayVarP(&opts.ExcludePrefix, "exclude", "x", nil, "skip sheets & columns with prefix (repeatable)")
 	rootCmd.Flags().BoolVar(&opts.CellJSON, "cell-json", false, "parse JSON strings inside cells")
 	rootCmd.Flags().BoolVar(&opts.AllString, "all-string", false, "convert all values to strings")
-	rootCmd.Flags().BoolVarP(&opts.Required, "required", "r", false, "unmarked types are required")
+	rootCmd.Flags().BoolVarP(&opts.Required, "required", "r", false, "unmarked fields are required")
 
 	// Output format
 	rootCmd.Flags().BoolVarP(&opts.ExportArray, "array", "a", false, "export as array instead of dict")
@@ -85,6 +85,7 @@ func init() {
 	rootCmd.Flags().StringVar(&opts.Name, "name", "", "filename preset: both, file, sheet (ignored if --name-tpl is set)")
 	rootCmd.Flags().BoolVarP(&opts.Pretty, "pretty", "p", false, "pretty-print JSON")
 	rootCmd.Flags().StringVarP(&opts.KeyColumn, "key", "k", "", "column name for dict keys (default: first column)")
+	rootCmd.Flags().StringVar(&opts.TypesPath, "types", "", "path to types.yaml/types.yml (auto-discovered next to input or in cwd)")
 }
 
 func main() {
@@ -112,108 +113,11 @@ func run(files []string, opts Options) error {
 			default:
 			}
 
-			sheets, err := LoadExcel(f, opts)
+			r, err := exportFile(f, opts, multi)
 			if err != nil {
-				return fmt.Errorf("%s: %w", f, err)
+				return err
 			}
-
-			target, targetIsDir := resolveTarget(multi, opts)
-			var lines []string
-
-			// stdout output must be serialized
-			toStdout := target == ""
-			if toStdout {
-				stdoutMu.Lock()
-			}
-
-			switch opts.Format {
-			case "json":
-				path := target
-				if targetIsDir {
-					if err := os.MkdirAll(target, 0755); err != nil {
-						return fmt.Errorf("%s: mkdir %s: %w", f, target, err)
-					}
-					path = filepath.Join(target, fileStem(f)+".json")
-				}
-
-				// default: split — each sheet to its own file
-				// -m/--merge: join all sheets into one file
-				if !opts.Merge && target != "" {
-					exp := NewExporter(opts)
-					valid := exp.FilterSheets(sheets)
-					dir := target
-					if !targetIsDir {
-						dir = filepath.Dir(path)
-					}
-					if err := os.MkdirAll(dir, 0755); err != nil {
-						return fmt.Errorf("%s: mkdir %s: %w", f, dir, err)
-					}
-					for _, s := range valid {
-						name := formatName(opts.NameTmpl, fileStem(f), s.Name) + ".json"
-						spath := filepath.Join(dir, sanitizeName(name))
-						if err := writeOneJSON(s, opts, spath); err != nil {
-							if toStdout {
-								stdoutMu.Unlock()
-							}
-							return fmt.Errorf("%s: %w", f, err)
-						}
-						lines = append(lines, spath)
-					}
-					break
-				}
-
-				if err := writeJSON(sheets, opts, path); err != nil {
-					if toStdout {
-						stdoutMu.Unlock()
-					}
-					return fmt.Errorf("%s: %w", f, err)
-				}
-				if path != "" {
-					lines = append(lines, path)
-				}
-
-			case "csv":
-				path := target
-				if targetIsDir {
-					if err := os.MkdirAll(target, 0755); err != nil {
-						return fmt.Errorf("%s: mkdir %s: %w", f, target, err)
-					}
-					path = filepath.Join(target, fileStem(f)+".csv")
-				}
-				if err := exportCSV(sheets, opts, path); err != nil {
-					if toStdout {
-						stdoutMu.Unlock()
-					}
-					return fmt.Errorf("%s: %w", f, err)
-				}
-				if path != "" {
-					if targetIsDir {
-						valid := NewExporter(opts).FilterSheets(sheets)
-						if len(valid) > 1 {
-							stem := strings.TrimSuffix(filepath.Base(path), ".csv")
-							for _, s := range valid {
-								lines = append(lines, filepath.Join(target, stem+"_"+sanitizeName(s.Name)+".csv"))
-							}
-						} else {
-							lines = append(lines, path)
-						}
-					} else {
-						lines = append(lines, path)
-					}
-				}
-
-			default:
-				if toStdout {
-					stdoutMu.Unlock()
-				}
-				return fmt.Errorf("unknown format %q (must be json or csv)", opts.Format)
-			}
-
-			if toStdout {
-				stdoutMu.Unlock()
-			}
-
-			results[i] = result{file: filepath.Base(f), lines: lines}
+			results[i] = result{file: r.file, lines: r.lines}
 			return nil
 		})
 	}
@@ -230,6 +134,108 @@ func run(files []string, opts Options) error {
 	}
 
 	return nil
+}
+
+type fileResult struct {
+	file  string
+	lines []string
+}
+
+// exportFile loads and exports one input file with its own type dictionary.
+func exportFile(f string, opts Options, multi bool) (fileResult, error) {
+	defs, err := loadTypeDefs(f, opts.TypesPath)
+	if err != nil {
+		return fileResult{}, fmt.Errorf("%s: %w", f, err)
+	}
+	opts.TypeDefs = defs
+	opts.SourceName = fileStem(f)
+
+	sheets, err := LoadExcel(f, opts)
+	if err != nil {
+		return fileResult{}, fmt.Errorf("%s: %w", f, err)
+	}
+
+	target, targetIsDir := resolveTarget(multi, opts)
+	var lines []string
+
+	// stdout output must be serialized
+	if target == "" {
+		stdoutMu.Lock()
+		defer stdoutMu.Unlock()
+	}
+
+	switch opts.Format {
+	case "json":
+		path := target
+		if targetIsDir {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", f, target, err)
+			}
+			path = filepath.Join(target, fileStem(f)+".json")
+		}
+
+		// default: split — each sheet to its own file
+		// -m/--merge: join all sheets into one file
+		if !opts.Merge && target != "" {
+			exp := NewExporterWithSheets(opts, sheets)
+			valid := exp.FilterSheets(sheets)
+			dir := target
+			if !targetIsDir {
+				dir = filepath.Dir(path)
+			}
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", f, dir, err)
+			}
+			for _, s := range valid {
+				name := formatName(opts.NameTmpl, fileStem(f), s.Name) + ".json"
+				spath := filepath.Join(dir, sanitizeName(name))
+				if err := writeOneJSONWithContext(s, sheets, opts, spath); err != nil {
+					return fileResult{}, fmt.Errorf("%s: %w", f, err)
+				}
+				lines = append(lines, spath)
+			}
+			break
+		}
+
+		if err := writeJSON(sheets, opts, path); err != nil {
+			return fileResult{}, fmt.Errorf("%s: %w", f, err)
+		}
+		if path != "" {
+			lines = append(lines, path)
+		}
+
+	case "csv":
+		path := target
+		if targetIsDir {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", f, target, err)
+			}
+			path = filepath.Join(target, fileStem(f)+".csv")
+		}
+		if err := exportCSV(sheets, opts, path); err != nil {
+			return fileResult{}, fmt.Errorf("%s: %w", f, err)
+		}
+		if path != "" {
+			if targetIsDir {
+				valid := NewExporterWithSheets(opts, sheets).FilterSheets(sheets)
+				if len(valid) > 1 {
+					stem := strings.TrimSuffix(filepath.Base(path), ".csv")
+					for _, s := range valid {
+						lines = append(lines, filepath.Join(target, stem+"_"+sanitizeName(s.Name)+".csv"))
+					}
+				} else {
+					lines = append(lines, path)
+				}
+			} else {
+				lines = append(lines, path)
+			}
+		}
+
+	default:
+		return fileResult{}, fmt.Errorf("unknown format %q (must be json or csv)", opts.Format)
+	}
+
+	return fileResult{file: filepath.Base(f), lines: lines}, nil
 }
 
 // resolveTarget returns the output path and whether it's a directory.
@@ -267,7 +273,13 @@ func writeJSON(sheets []Sheet, opts Options, target string) error {
 
 // writeOneJSON serialises a single sheet to JSON and writes to path.
 func writeOneJSON(sheet Sheet, opts Options, path string) error {
-	content, err := ExportJSON([]Sheet{sheet}, opts)
+	return writeOneJSONWithContext(sheet, []Sheet{sheet}, opts, path)
+}
+
+// writeOneJSONWithContext serialises one sheet while keeping every sheet in
+// context available to ref(...) checks.
+func writeOneJSONWithContext(sheet Sheet, context []Sheet, opts Options, path string) error {
+	content, err := ExportJSONWithContext([]Sheet{sheet}, context, opts)
 	if err != nil {
 		return err
 	}

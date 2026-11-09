@@ -14,11 +14,21 @@ import (
 type Exporter struct {
 	opts      Options
 	typeCache sync.Map // map[string]cachedType
+	specCache sync.Map // map[string]cachedFieldSpec
+	refCache  sync.Map // map[string]refSetResult
+	sheets    []Sheet  // all sheets in the workbook, used by ref(...)
 }
 
-// NewExporter returns an Exporter ready for use.
+// NewExporter returns an Exporter without workbook context. ref(...) checks
+// require NewExporterWithSheets.
 func NewExporter(opts Options) *Exporter {
 	return &Exporter{opts: opts}
+}
+
+// NewExporterWithSheets returns an Exporter that can resolve ref(...) checks
+// against every sheet in the workbook.
+func NewExporterWithSheets(opts Options, sheets []Sheet) *Exporter {
+	return &Exporter{opts: opts, sheets: sheets}
 }
 
 // ---------------------------------------------------------------------------
@@ -67,12 +77,17 @@ func (e *Exporter) ConvertRow(sheet Sheet, rowIdx int, row []string) (map[string
 			colType = sheet.Types[ci]
 		}
 
+		var required *bool
+		if ci < len(sheet.Required) {
+			required = sheet.Required[ci]
+		}
+
 		// Empty cell with no type annotation → skip the field entirely
-		if cell == "" && colType == "" {
+		if cell == "" && colType == "" && required == nil {
 			continue
 		}
 
-		val, err := e.convertCell(colType, cell)
+		val, err := e.convertCellMeta(colType, cell, required)
 		if err != nil {
 			return nil, fmt.Errorf("sheet [%s] data row %d, column %q: %w",
 				sheet.Name, rowIdx+1, header, err)
@@ -158,7 +173,7 @@ func (e *Exporter) toDict(sheet Sheet) (map[string]any, error) {
 	// Determine key column: --key flag overrides the default (first column).
 	keyName := ""
 	if e.opts.KeyColumn != "" {
-		keyName = e.opts.KeyColumn
+		keyName, _ = splitFieldMarker(e.opts.KeyColumn)
 		if e.opts.Lowcase {
 			keyName = strings.ToLower(keyName)
 		}
@@ -194,13 +209,54 @@ func (e *Exporter) toDict(sheet Sheet) (map[string]any, error) {
 // convertCell converts and validates a raw cell string according to its type annotation.
 // If colType is empty, falls back to legacy automatic behavior (number detection, CellJSON).
 func (e *Exporter) convertCell(colType, cell string) (any, error) {
-	if colType != "" {
-		return e.convertTyped(colType, cell)
+	return e.convertCellMeta(colType, cell, nil)
+}
+
+// convertCellMeta is convertCell with an optional field-level nullability
+// override taken from the header name (! or ?).
+func (e *Exporter) convertCellMeta(colType, cell string, required *bool) (any, error) {
+	if colType == "" {
+		if cell == "" {
+			if required != nil && *required {
+				return nil, fmt.Errorf("field cannot be empty")
+			}
+			return "", nil
+		}
+		return e.legacyConvert(cell)
 	}
-	if cell == "" {
-		return "", nil
+
+	spec, err := e.parseFieldSpecCached(colType)
+	if err != nil {
+		return nil, err
 	}
-	return e.legacyConvert(cell)
+
+	// Preserve the original fast path for plain type annotations. Type-level
+	// !/? markers are stripped by the annotation parser, so emptiness here is
+	// controlled only by the header marker or --required.
+	if isPlainSpec(spec) {
+		typ := spec.rules[0].typ
+		if cell == "" {
+			req := e.opts.Required
+			if required != nil {
+				req = *required
+			}
+			if req {
+				return nil, fmt.Errorf("field cannot be empty (type %s)", typ)
+			}
+			return zeroValue(typ), nil
+		}
+		return e.convertTyped(typ.String(), cell)
+	}
+
+	return e.convertFieldSpec(spec, cell, required)
+}
+
+func isPlainSpec(spec *fieldSpec) bool {
+	if spec == nil || len(spec.rules) != 1 {
+		return false
+	}
+	rule := spec.rules[0]
+	return rule.selector == nil && !rule.conditional && len(rule.checks) == 0 && rule.typ != nil
 }
 
 // legacyConvert applies CellJSON and number detection to a raw cell string.

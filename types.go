@@ -35,14 +35,38 @@ type Options struct {
 	Name        string // --name       preset: both, file, sheet
 	Pretty      bool   // -p --pretty   pretty-print JSON
 	KeyColumn   string // -k --key      column name for dict keys (default: first column)
+
+	// Type reuse
+	TypesPath string            // --types   path to types.yaml/types.yml (auto-discovered if empty)
+	TypeDefs  map[string]string // loaded #name -> annotation definitions (not a CLI flag)
+
+	// Output identity
+	SourceName string // input file stem, used to compute ref(...) package names (not a CLI flag)
 }
 
 // Sheet holds the parsed contents of a single worksheet.
 type Sheet struct {
-	Name    string
-	Headers []string   // column names from the header rows
-	Types   []string   // column type annotations (empty if no type row)
-	Rows    [][]string // data rows
+	Name     string
+	Headers  []string   // column names from the header rows (!/? markers stripped)
+	Types    []string   // column type annotations (empty if no type row)
+	Required []*bool    // per-column nullability from header markers; nil = unset
+	Rows     [][]string // data rows
+}
+
+// splitFieldMarker extracts a trailing ! (required) or ? (nullable) marker
+// from a header name. The returned pointer is nil when no marker is present:
+// true means required, false means nullable.
+func splitFieldMarker(name string) (string, *bool) {
+	switch {
+	case strings.HasSuffix(name, "!"):
+		v := true
+		return strings.TrimSuffix(name, "!"), &v
+	case strings.HasSuffix(name, "?"):
+		v := false
+		return strings.TrimSuffix(name, "?"), &v
+	default:
+		return name, nil
+	}
 }
 
 // fileStem returns the filename without extension.

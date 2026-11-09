@@ -1,0 +1,3 @@
+types:
+  itemId: "string:ref(item.id)"
+  items: "$[*][1::3]:string:ref(item.id)"
