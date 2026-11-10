@@ -141,7 +141,7 @@ func matchInt(v any, t *Type) bool {
 	case uint32:
 		return signedFits(int64(x), t.Bits)
 	case uint64:
-		return uint64(x) <= math.MaxInt64 && signedFits(int64(x), t.Bits)
+		return x <= math.MaxInt64 && signedFits(int64(x), t.Bits)
 	case float64:
 		if x != math.Trunc(x) {
 			return false
