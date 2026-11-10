@@ -79,6 +79,7 @@ func NewCommand(version string) *cobra.Command {
 	root.Flags().StringArrayVarP(&opts.ExcludePrefixes, "exclude", "x", nil, "skip sheets & columns with prefix (repeatable)")
 	root.Flags().StringVar(&opts.Tag, "tag", "", "only export sheets/columns with this tag; untagged = common")
 	root.Flags().BoolVar(&opts.StrictTags, "strict-tags", false, "with --tag, error on untagged sheets/columns")
+	root.Flags().BoolVar(&opts.Verbose, "verbose", false, "log skipped sheets/columns and files")
 	root.Flags().BoolVar(&opts.ParseCellJSON, "parse-cell-json", false, "parse JSON strings inside cells")
 	root.Flags().BoolVar(&opts.StringifyAll, "stringify-all", false, "convert all values to strings")
 	root.Flags().BoolVar(&opts.RequireByDefault, "required-by-default", false, "treat fields without !/? as required")
@@ -160,7 +161,23 @@ func Run(files []string, opts core.Options) error {
 
 	contextSheets := make([]convert.SheetContext, 0)
 	for _, in := range inputs {
+		var engine *convert.Engine
+		if in.opts.Verbose {
+			engine = convert.New(in.opts)
+		}
 		for _, sheet := range in.sheets {
+			if engine != nil {
+				switch {
+				case in.opts.Tag != "" && !core.TagMatches(sheet.Tags, in.opts.Tag):
+					verbosef("skip sheet %q in %s for output: tag %q not matched\n", sheet.Name, in.path, in.opts.Tag)
+				case !engine.HasSelectedColumns(sheet):
+					if in.opts.Tag != "" {
+						verbosef("skip sheet %q in %s for output: no columns for tag %q\n", sheet.Name, in.path, in.opts.Tag)
+					} else {
+						verbosef("skip sheet %q in %s for output: no selected columns\n", sheet.Name, in.path)
+					}
+				}
+			}
 			name := core.SanitizeName(core.ExpandNameTemplate(in.opts.NameTmpl, in.opts.SourceStem, sheet.Name))
 			contextSheets = append(contextSheets, convert.SheetContext{
 				Sheet:      sheet,
@@ -230,6 +247,10 @@ func Run(files []string, opts core.Options) error {
 	return nil
 }
 
+func verbosef(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "verbose: "+format, args...)
+}
+
 type loadedInput struct {
 	path   string
 	opts   core.Options
@@ -264,6 +285,9 @@ func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fi
 			return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
 		}
 		if len(valid) == 0 {
+			if opts.Verbose {
+				verbosef("skip file %s: no exportable sheets for tag %q\n", in.path, opts.Tag)
+			}
 			return fileResult{}, nil
 		}
 		sheets = valid

@@ -86,6 +86,7 @@ excel2json data.xlsx -t 1 --required-by-default
 | `-x` | `--exclude` | `nil` | 加载时丢弃指定前缀的注释 sheet/列（可重复） |
 | | `--tag` | `""` | 只导出带该标签的 sheet/列；无标签视为公共 |
 | | `--strict-tags` | `false` | 配合 `--tag`，导出无标签的 sheet/列时报错 |
+| | `--verbose` | `false` | 把跳过的 sheet/列/文件及原因输出到 stderr |
 | | `--parse-cell-json` | `false` | 解析无类型列单元格中的 JSON 字符串 |
 | | `--stringify-all` | `false` | 无类型列全部输出为字符串 |
 | | `--types` | `""` | types.yaml / types.yml 路径（省略时自动查找） |
@@ -122,6 +123,7 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 - `-x/--exclude` 在加载时丢弃匹配的 sheet/列；它们不参与输出、守卫或 `ref(...)`（例如用 `-x '#'` 排除注释）
 - 无标签的 sheet/列视为公共，任何 `--tag` 都会导出
 - `--strict-tags` 下，被导出的 sheet/列若没有标签则报错
+- `--verbose` 会把 tag、`-x`、空数据、无匹配文件导致的跳过原因输出到 stderr
 - 字典模式默认使用第一个导出的列作为 key
 - 同一 Sheet 内列的基础名必须唯一（忽略大小写），与 tag 无关（`reward@c` + `reward@s` 不合法）；`-x` 排除的列不参与判断
 - `ref(...)` 基于所有已加载的 sheet/列校验，不受 `--tag` 影响；`-x` 排除的 sheet/列不会加载，也不能被引用

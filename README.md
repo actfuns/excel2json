@@ -88,6 +88,7 @@ excel2json data.xlsx -t 1 --required-by-default
 | `-x` | `--exclude` | `nil` | Drop comment sheets/columns by prefix at load time (repeatable) |
 | | `--tag` | `""` | Only export sheets/columns with this tag; untagged = common |
 | | `--strict-tags` | `false` | With `--tag`, error on untagged sheets/columns |
+| | `--verbose` | `false` | Log skipped sheets/columns/files and reasons to stderr |
 | | `--parse-cell-json` | `false` | Parse JSON strings inside untyped cells |
 | | `--stringify-all` | `false` | Stringify untyped values |
 | | `--types` | `""` | types.yaml / types.yml path (auto-discovered next to the input or in cwd) |
@@ -124,6 +125,7 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 - `-x/--exclude` drops matching sheets/columns at load time; they are not valid for output, guards or `ref(...)` (e.g. `-x '#'` for comments)
 - Untagged sheets and columns are common and exported for every `--tag`
 - `--strict-tags` makes an untagged exported sheet/column an error
+- `--verbose` logs skips caused by tags, `-x`, empty data and no-match files to stderr
 - Dict mode keys by the first exported column
 - Column base names must be unique within a sheet, case-insensitively and independent of tags (`reward@c` + `reward@s` is invalid); `-x` excluded columns do not count
 - `ref(...)` validates against all loaded sheets/columns, independent of `--tag`; `-x` excluded sheets/columns are not loaded and cannot be referenced

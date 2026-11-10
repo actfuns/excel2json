@@ -89,15 +89,25 @@ func (e *Engine) ConvertSheet(sheet core.Sheet) (any, error) {
 
 // ConvertRow transforms a single data row into a map keyed by column name.
 func (e *Engine) ConvertRow(sheet core.Sheet, rowIdx int, row []string) (map[string]any, error) {
-	out := make(map[string]any)
+	cols, err := e.selectedColumns(sheet)
+	if err != nil {
+		return nil, err
+	}
+	return e.convertRow(sheet, rowIdx, row, cols)
+}
 
-	for ci, header := range sheet.Headers {
-		selected, err := e.columnSelected(sheet, ci)
-		if err != nil {
-			return nil, err
-		}
-		if !selected {
-			continue
+// ConvertRowWithColumns converts a row using a previously selected column plan.
+func (e *Engine) ConvertRowWithColumns(sheet core.Sheet, rowIdx int, row []string, cols []CSVColumn) (map[string]any, error) {
+	return e.convertRow(sheet, rowIdx, row, cols)
+}
+
+func (e *Engine) convertRow(sheet core.Sheet, rowIdx int, row []string, cols []CSVColumn) (map[string]any, error) {
+	out := make(map[string]any, len(cols))
+
+	for _, col := range cols {
+		ci := col.Index
+		if ci < 0 || ci >= len(sheet.Headers) {
+			return nil, fmt.Errorf("invalid column index %d in sheet %q", ci, sheet.Name)
 		}
 
 		cell := ""
@@ -123,17 +133,30 @@ func (e *Engine) ConvertRow(sheet core.Sheet, rowIdx int, row []string) (map[str
 		val, err := e.convertCellMetaCtx(colType, cell, required, &rowContext{sheet: &sheet, row: row})
 		if err != nil {
 			return nil, fmt.Errorf("sheet [%s] data row %d, column %q: %w",
-				sheet.Name, rowIdx+1, header, err)
+				sheet.Name, rowIdx+1, sheet.Headers[ci], err)
 		}
 
-		name := e.fieldName(header, ci)
-		if _, exists := out[name]; exists {
+		if _, exists := out[col.Name]; exists {
 			return nil, fmt.Errorf("duplicate output field %q (sheet %q, data row %d)",
-				name, sheet.Name, rowIdx+1)
+				col.Name, sheet.Name, rowIdx+1)
 		}
-		out[name] = val
+		out[col.Name] = val
 	}
 	return out, nil
+}
+
+func (e *Engine) selectedColumns(sheet core.Sheet) ([]CSVColumn, error) {
+	cols := make([]CSVColumn, 0, len(sheet.Headers))
+	for ci, header := range sheet.Headers {
+		selected, err := e.columnSelected(sheet, ci)
+		if err != nil {
+			return nil, err
+		}
+		if selected {
+			cols = append(cols, CSVColumn{Index: ci, Name: e.fieldName(header, ci)})
+		}
+	}
+	return cols, nil
 }
 
 // CSVColumns returns column metadata for the CSV writer.
@@ -144,22 +167,18 @@ func (e *Engine) CSVColumns(sheet core.Sheet) ([]CSVColumn, error) {
 	if err := e.validateSheetTags(sheet); err != nil {
 		return nil, err
 	}
-	var cols []CSVColumn
-	seen := make(map[string]bool, len(sheet.Headers))
-	for ci, header := range sheet.Headers {
-		selected, err := e.columnSelected(sheet, ci)
-		if err != nil {
-			return nil, err
+	selected, err := e.selectedColumns(sheet)
+	if err != nil {
+		return nil, err
+	}
+	cols := make([]CSVColumn, 0, len(selected))
+	seen := make(map[string]bool, len(selected))
+	for _, col := range selected {
+		if seen[col.Name] {
+			return nil, fmt.Errorf("duplicate output field %q (sheet %q)", col.Name, sheet.Name)
 		}
-		if !selected {
-			continue
-		}
-		name := e.fieldName(header, ci)
-		if seen[name] {
-			return nil, fmt.Errorf("duplicate output field %q (sheet %q)", name, sheet.Name)
-		}
-		seen[name] = true
-		cols = append(cols, CSVColumn{Index: ci, Name: name})
+		seen[col.Name] = true
+		cols = append(cols, col)
 	}
 	return cols, nil
 }
@@ -258,6 +277,11 @@ func (e *Engine) validateSheetTags(sheet core.Sheet) error {
 	return nil
 }
 
+// HasSelectedColumns reports whether the sheet has at least one column selected by -x/tag.
+func (e *Engine) HasSelectedColumns(sheet core.Sheet) bool {
+	return e.hasSelectedColumn(sheet)
+}
+
 func (e *Engine) hasSelectedColumn(sheet core.Sheet) bool {
 	for ci := range sheet.Headers {
 		if e.skipColumn(sheet.Headers[ci]) {
@@ -284,9 +308,13 @@ func sheetHasTags(sheet core.Sheet) bool {
 
 // toArray produces []any from every data row.
 func (e *Engine) toArray(sheet core.Sheet) ([]any, error) {
+	cols, err := e.selectedColumns(sheet)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]any, 0, len(sheet.Rows))
 	for ri, row := range sheet.Rows {
-		m, err := e.ConvertRow(sheet, ri, row)
+		m, err := e.convertRow(sheet, ri, row, cols)
 		if err != nil {
 			return nil, err
 		}
@@ -298,58 +326,37 @@ func (e *Engine) toArray(sheet core.Sheet) ([]any, error) {
 // toDict produces map[string]any keyed by the first column's value.
 func (e *Engine) toDict(sheet core.Sheet) (map[string]any, error) {
 	// Determine key column: --key flag overrides the default (first column).
+	cols, err := e.selectedColumns(sheet)
+	if err != nil {
+		return nil, err
+	}
+
 	keyName := ""
 	if e.opts.KeyColumn != "" {
 		target, _, _ := core.SplitHeader(e.opts.KeyColumn, true)
 		if e.opts.Lowercase {
 			target = strings.ToLower(target)
 		}
-		for ci, header := range sheet.Headers {
-			name := header
-			if e.opts.Lowercase {
-				name = strings.ToLower(name)
-			}
-			if !strings.EqualFold(name, target) {
-				continue
-			}
-			selected, err := e.columnSelected(sheet, ci)
-			if err != nil {
-				return nil, err
-			}
-			if selected {
-				keyName = name
+		for _, col := range cols {
+			if strings.EqualFold(col.Name, target) {
+				keyName = col.Name
 				break
 			}
 		}
 		if keyName == "" {
 			return nil, fmt.Errorf("key column %q not found or excluded", e.opts.KeyColumn)
 		}
-	} else if len(sheet.Headers) > 0 {
+	} else if len(cols) > 0 {
 		if e.opts.Tag != "" || sheetHasTags(sheet) {
-			for ci, header := range sheet.Headers {
-				selected, err := e.columnSelected(sheet, ci)
-				if err != nil {
-					return nil, err
-				}
-				if selected {
-					keyName = e.fieldName(header, ci)
-					break
-				}
-			}
-		} else {
-			selected, err := e.columnSelected(sheet, 0)
-			if err != nil {
-				return nil, err
-			}
-			if selected {
-				keyName = e.fieldName(sheet.Headers[0], 0)
-			}
+			keyName = cols[0].Name
+		} else if cols[0].Index == 0 {
+			keyName = cols[0].Name
 		}
 	}
 
 	out := make(map[string]any, len(sheet.Rows))
 	for ri, row := range sheet.Rows {
-		m, err := e.ConvertRow(sheet, ri, row)
+		m, err := e.convertRow(sheet, ri, row, cols)
 		if err != nil {
 			return nil, err
 		}

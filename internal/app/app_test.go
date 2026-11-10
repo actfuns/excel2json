@@ -855,3 +855,45 @@ func TestRefCannotUseExcludedSheet(t *testing.T) {
 		t.Fatalf("Run = %v, want excluded sheet ref error", err)
 	}
 }
+
+func captureStderr(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	runErr := fn()
+	_ = w.Close()
+	data, readErr := io.ReadAll(r)
+	_ = r.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	return string(data), runErr
+}
+
+func TestRunVerboseSkipReasons(t *testing.T) {
+	workbook := makeTaggedWorkbook(t)
+	out := filepath.Join(t.TempDir(), "out") + "/"
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		NameTmpl:   "{sheet}",
+		OutputPath: out,
+		Tag:        "c",
+		Verbose:    true,
+	}
+	stderr, err := captureStderr(t, func() error { return Run([]string{workbook}, opts) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "tag \"c\" not matched") {
+		t.Errorf("stderr = %q, want tag skip reason", stderr)
+	}
+}

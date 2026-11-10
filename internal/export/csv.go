@@ -151,7 +151,7 @@ func writeCSV(w io.Writer, sheet core.Sheet, exp *convert.Engine) error {
 	}
 
 	for ri, row := range sheet.Rows {
-		m, err := exp.ConvertRow(sheet, ri, row)
+		m, err := exp.ConvertRowWithColumns(sheet, ri, row, cols)
 		if err != nil {
 			return err
 		}

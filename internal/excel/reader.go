@@ -140,6 +140,9 @@ func Load(filePath string, opts core.Options) ([]core.Sheet, error) {
 		sheetName, sheetTags, _ := core.SplitTagSuffix(rs.Name)
 		sheetName = strings.TrimSpace(sheetName)
 		if excludedByPrefix(sheetName, opts.ExcludePrefixes) || excludedByPrefix(rs.Name, opts.ExcludePrefixes) {
+			if opts.Verbose {
+				fmt.Fprintf(os.Stderr, "verbose: skip sheet %q in %s: excluded by -x\n", rs.Name, filePath)
+			}
 			continue
 		}
 
@@ -151,6 +154,9 @@ func Load(filePath string, opts core.Options) ([]core.Sheet, error) {
 			}
 		}
 		if maxCols == 0 {
+			if opts.Verbose {
+				fmt.Fprintf(os.Stderr, "verbose: skip sheet %q in %s: no columns\n", sheetName, filePath)
+			}
 			continue
 		}
 
@@ -223,10 +229,20 @@ func Load(filePath string, opts core.Options) ([]core.Sheet, error) {
 			dataRows = append(dataRows, padded)
 		}
 		if len(dataRows) == 0 {
+			if opts.Verbose {
+				fmt.Fprintf(os.Stderr, "verbose: skip sheet %q in %s: no data rows\n", sheetName, filePath)
+			}
 			continue
 		}
 
 		keep, filtered := filterExcludedColumns(headers, opts.ExcludePrefixes)
+		if filtered && opts.Verbose {
+			for _, header := range headers {
+				if excludedByPrefix(header, opts.ExcludePrefixes) {
+					fmt.Fprintf(os.Stderr, "verbose: skip column %q in %s:%s: excluded by -x\n", header, filePath, sheetName)
+				}
+			}
+		}
 		if filtered {
 			headers = filterStrings(headers, keep)
 			types = filterStrings(types, keep)
