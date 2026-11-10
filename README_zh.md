@@ -162,7 +162,7 @@ excel2json data.xlsx -t 1 --required-by-default
 | 基础类型 | `bool`、`string`、`int`、`int8`、`int16`、`int32`、`int64`、`uint`、`uint8`、`uint16`、`uint32`、`uint64`、`uintptr`、`float32`、`float64`、`byte`、`rune`、`any`、`interface{}` |
 | 数组 / 切片 | `[]T`、`[N]T` |
 | Map | `map[K]V` |
-| 额外别名 | `date`、`float`（= `float64`）、`object`（= `map[string]any`）、`list`（= `[]any`） |
+| 额外别名 | `date`、`float`（= `float64`）、`object`（= `map[string]any`）、`list`（= `[]any`）、`null` |
 
 复合类型要求单元格内容为合法 JSON，例如 `[1,2,3]` 或 `{"a":"b"}`。数组长度、元素类型、数值范围、map 的 key 和 value 都会校验。
 
@@ -179,38 +179,53 @@ excel2json data.xlsx -t 1 --required-by-default
 
 不加标记时使用 `-r/--required-by-default` 的全局默认值。空值输出 `0`、`false`、`""`，复合类型输出 `null`。
 
-### 类型匹配（类型上的 ! / ?）
+### when(...) 条件守卫
 
-类型后面的 `!` / `?` 只控制**类型匹配**，不控制空值：
-
-| 写法 | 含义 |
-|---|---|
-| `int` / `int!` | 必须是 int，不匹配报错 |
-| `int?` | 只有当值是 int 时才执行这条规则的校验；不是 int 就跳过 |
+在规则开头加 `when(...)`，条件成立时才执行该规则：
 
 ```text
-id!                        # 字段必填
-name?                      # 字段可空
+when(type=1) effects:[]int:ref(effect.id)
+when(type!=0, level>=10) int:gt(0)
+when(typeof($) = [3]int) ...
+when(typeof(kind.a) = int) ...
+```
 
-int:lt(1)                  # 必须是 int，且 <1
-int?:lt(1)                 # 只有值是 int 时才校验 <1
-int?:lt(1);string?:minlen(1)
+- `type` — 其他列的原始值
+- `kind.a` / `kind[0]` — 对其他列做 JSONPath
+- `$.a` — 对当前单元格做 JSONPath
+- `$` — 当前单元格
+- `typeof(ref) = <类型表达式>` — 结构化 JSON 类型判断
+- 运算符：`=`、`==`、`!=`、`>`、`>=`、`<`、`<=`；`typeof` 只支持 `=`、`==`、`!=`
+- `when(...)` 内逗号 = AND；`;` 仍然分隔规则
+- `and(...)`、`or(...)`、`not(...)` 可嵌套；`not(a,b)` = `NOT(a AND b)`
+- `type(...)` 是 `typeof(...)` 的别名
+- 类型表达式支持 `[3]int`、`[]T`、`map[K]V`、`[2][2]int` 等
+- 原始单元格不是合法 JSON 时按 `string` 处理；`TRUE`/`FALSE` 识别为布尔值
+- 列不存在或需要 JSON 但内容非法时返回错误；路径无匹配表示条件不成立；多匹配时任意一个满足即可
+
+```text
+when(type=1) effects:[]int:ref(effect.id)
+when(typeof($) = int) gte(0)
+when(typeof($) = string) len(2,4)
+when(type=1, typeof(kind.a) = [3]int) ...
+when(or(type=1, level>=10)) ...
+when(not(type=1)) ...
 ```
 
 ### 校验规则
 
 ```ebnf
-fieldSpec = rule { ";" rule }
-rule      = [ selector ":" ] [ type [ "!" | "?" ] [ ":" checks ] ]
-checks    = check { "," check }
+fieldSpec  = rule { ";" rule }
+rule       = [ "when(" conditions ")" ] [ selector ":" ] [ type [ ":" checks ] ]
+conditions = condition { "," condition }
+checks     = check { "," check }
 ```
 
 | 语法 | 含义 |
 |---|---|
 | `,` | 多条校验同时满足（AND） |
 | `;` | 多条规则同时生效（AND，选择器允许重叠） |
-| `!` | 类型必须匹配（默认行为，显式写更清楚） |
-| `?` | 只有值匹配该类型时才执行这条规则；不匹配则跳过 |
+| `when(...)` | 规则守卫，所有条件都满足才执行（AND） |
 | 选择器省略 | 作用于字段本身 |
 | 类型省略 | 按选择器产出的元素原值校验 |
 
@@ -218,7 +233,7 @@ checks    = check { "," check }
 
 ```text
 int:gt(0),lt(100)
-int?:lt(1);string?:minlen(1)
+when(typeof($) = int) gt(0);when(typeof($) = string) len(1)
 $[*][1::3]:string:ref(item.id)
 $[0]:int:gte(0);$[2]:int32:gt(0)
 [4]int32:pad,gte(0)
@@ -227,7 +242,7 @@ $[0]:int:gte(0);$[2]:int32:gt(0)
 - 选择器只负责**定位**规则要校验的值，不是输出选择器；输出始终是整个字段。
 - 所有规则都**原位写回**：选中的节点按规则转换后写回原结构，未选中的部分保持原样。
 - 规则按书写顺序执行；重叠位置以后面的规则为准。
-- 条件类型 `?` 命中后校验失败仍然报错；未命中则该规则跳过。
+- 守卫不成立的规则跳过；如果所有规则都被跳过，字段保持原值。
 - 选择器无匹配时按标准 JSONPath 返回空结果，不报错。
 
 ```text
@@ -316,7 +331,7 @@ types:
 
 - **并行处理**：文件并发处理（上限 `2 × CPU 核心数`）
 - **前缀排除**：使用 `-x`（前缀匹配）跳过 sheet 和列；可重复使用
-- **强类型注解**：Go 风格类型、JSONPath 选择器、校验器、条件类型、`pad`、`ref`、`types.yaml` 复用（`-t`、`-r`、`--types`）
+- **强类型注解**：Go 风格类型、JSONPath 选择器、校验器、条件守卫、`pad`、`ref`、`types.yaml` 复用（`-t`、`-r`、`--types`）
 - **智能单元格解析**：单元格中的 JSON 字符串自动反序列化（`--parse-cell-json`）
 - **全字符串模式**：无类型列输出原始字符串（`--stringify-all`）
 - **字段名小写**：`-l` 转小写

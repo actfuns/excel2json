@@ -56,42 +56,73 @@ func TestSingularSelectorWriteBack(t *testing.T) {
 	}
 }
 
-func TestConditionalTypes(t *testing.T) {
-	e := New(core.Options{})
-
-	pass := []struct{ cell, want string }{
-		{"0", "0"},
-		{"abc", `"abc"`},
+func TestGuards(t *testing.T) {
+	e := New(core.Options{ListOutput: true})
+	sheet := core.Sheet{
+		Name:    "S",
+		Headers: []string{"type", "level", "kind", "a", "b", "c", "d", "e", "f", "g", "h", "k"},
+		Types: []string{
+			"int", "int", "object",
+			"when(type=1) int:gt(0)",
+			"when(type=1, level>=10) string:len(1)",
+			"when(kind.a=2) int:gt(0)",
+			"when(typeof($) = [3]int) [3]int",
+			"when(typeof($) = string) string:len(2,4)",
+			"when(type!=0) int:gte(0)",
+			"when(typeof(kind.b) = string) string:len(1)",
+			"when(typeof(kind.arr) = [3]int) [3]int",
+			"when($.flag=true) $.v:int",
+		},
 	}
-	annotation := `int?:lt(1);string?:minlen(1)`
-	for _, c := range pass {
-		v, err := e.convertCell(annotation, c.cell)
-		if err != nil {
-			t.Errorf("%q: %v", c.cell, err)
-			continue
-		}
-		if got := marshalValue(t, v); got != c.want {
-			t.Errorf("%q = %s, want %s", c.cell, got, c.want)
-		}
-	}
-
-	// int matched, so its check failure is an error (no fallback to string).
-	if _, err := e.convertCell(annotation, "5"); err == nil {
-		t.Error("5: expected int check failure")
-	}
-
-	// No conditional type matches: leave the value unchanged.
-	v, err := e.convertCell(`int?:lt(1);bool?:eq(true)`, "abc")
+	row := []string{"1", "10", `{"a":2,"b":"k","arr":[1,2,3]}`, "5", "x", "7", "[1,2,3]", "abc", "8", "z", "[4,5,6]", `{"flag":true,"v":5}`}
+	m, err := e.ConvertRow(sheet, 0, row)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := marshalValue(t, v); got != `"abc"` {
-		t.Errorf("no-match = %s, want \"abc\"", got)
+	cases := map[string]string{
+		"a": "5",
+		"b": `"x"`,
+		"c": "7",
+		"d": "[1,2,3]",
+		"e": `"abc"`,
+		"f": "8",
+		"g": `"z"`,
+		"h": "[4,5,6]",
+		"k": `{"flag":true,"v":5}`,
+	}
+	for key, want := range cases {
+		if got := marshalValue(t, m[key]); got != want {
+			t.Errorf("%s = %s, want %s", key, got, want)
+		}
 	}
 
-	// A strict type still errors when the value does not match.
-	if _, err := e.convertCell(`int!:lt(1)`, "abc"); err == nil {
-		t.Error("strict int: expected error")
+	// Skipped guards leave the raw cell untouched.
+	row2 := []string{"2", "5", `{"a":3}`, "bad", "y", "bad", "[1]", "abc", "9", "z", "[4]", `{"flag":false,"v":5}`}
+	m, err = e.ConvertRow(sheet, 1, row2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"a": `"bad"`,
+		"b": `"y"`,
+		"c": `"bad"`,
+		"d": "[1]",
+	} {
+		if got := marshalValue(t, m[key]); got != want {
+			t.Errorf("skipped %s = %s, want %s", key, got, want)
+		}
+	}
+}
+
+func TestGuardErrors(t *testing.T) {
+	e := New(core.Options{})
+	sheet := core.Sheet{
+		Name:    "S",
+		Headers: []string{"type", "a"},
+		Types:   []string{"int", "when(missing=1) int"},
+	}
+	if _, err := e.ConvertRow(sheet, 0, []string{"1", "5"}); err == nil {
+		t.Error("missing guard column: expected error")
 	}
 }
 
@@ -187,23 +218,23 @@ func TestNamedTypeReference(t *testing.T) {
 	}
 }
 
-func TestTypeMarkerDoesNotAffectEmpty(t *testing.T) {
+func TestEmptyType(t *testing.T) {
 	e := New(core.Options{})
-	v, err := e.convertCell(`int!`, "")
+	v, err := e.convertCell(`int`, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := marshalValue(t, v); got != "0" {
-		t.Errorf("int! empty = %s, want 0", got)
+		t.Errorf("int empty = %s, want 0", got)
 	}
 
 	required := true
-	if _, err := e.convertCellMeta(`int!`, "", &required); err == nil {
+	if _, err := e.convertCellMeta(`int`, "", &required); err == nil {
 		t.Error("header required: expected error")
 	}
 
 	e = New(core.Options{RequireByDefault: true})
-	if _, err := e.convertCell(`int!`, ""); err == nil {
+	if _, err := e.convertCell(`int`, ""); err == nil {
 		t.Error("--required-by-default: expected error")
 	}
 }
@@ -345,5 +376,79 @@ func TestCrossWorkbookRef(t *testing.T) {
 	}
 	if _, err := e.ConvertRow(buff, 1, buff.Rows[1]); err == nil {
 		t.Error("missing cross-workbook ref: expected error")
+	}
+}
+
+func TestGuardCombinators(t *testing.T) {
+	e := New(core.Options{})
+	sheet := core.Sheet{
+		Name:    "S",
+		Headers: []string{"type", "a", "b"},
+		Types: []string{
+			"int",
+			"when(or(type=1, type=2)) int:gt(0)",
+			"when(not(type=1)) int:gt(0)",
+		},
+	}
+	cases := []struct {
+		row   []string
+		wantA string
+		wantB string
+	}{
+		{[]string{"2", "5", "6"}, "5", "6"},
+		{[]string{"1", "5", "6"}, "5", `"6"`},
+		{[]string{"3", "bad", "7"}, `"bad"`, "7"},
+	}
+	for _, c := range cases {
+		m, err := e.ConvertRow(sheet, 0, c.row)
+		if err != nil {
+			t.Errorf("%v: %v", c.row, err)
+			continue
+		}
+		if got := marshalValue(t, m["a"]); got != c.wantA {
+			t.Errorf("%v a = %s, want %s", c.row, got, c.wantA)
+		}
+		if got := marshalValue(t, m["b"]); got != c.wantB {
+			t.Errorf("%v b = %s, want %s", c.row, got, c.wantB)
+		}
+	}
+}
+
+func TestGuardExcelBoolean(t *testing.T) {
+	e := New(core.Options{})
+	sheet := core.Sheet{
+		Name:    "S",
+		Headers: []string{"active", "a", "b"},
+		Types: []string{
+			"bool",
+			"when(active=true) int:gt(0)",
+			"when(typeof($) = bool) bool",
+		},
+	}
+	m, err := e.ConvertRow(sheet, 0, []string{"TRUE", "5", "FALSE"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := marshalValue(t, m["a"]); got != "5" {
+		t.Errorf("a = %s, want 5", got)
+	}
+	if got := marshalValue(t, m["b"]); got != "false" {
+		t.Errorf("b = %s, want false", got)
+	}
+}
+
+func TestGuardNotShortCircuits(t *testing.T) {
+	e := New(core.Options{})
+	sheet := core.Sheet{
+		Name:    "S",
+		Headers: []string{"type", "a"},
+		Types:   []string{"int", "when(not(type=1, missing=2)) int"},
+	}
+	m, err := e.ConvertRow(sheet, 0, []string{"0", "5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := marshalValue(t, m["a"]); got != "5" {
+		t.Errorf("a = %s, want 5", got)
 	}
 }

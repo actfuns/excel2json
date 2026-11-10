@@ -162,7 +162,7 @@ Set `-t/--type-row` to the row containing type annotations (0-based). Cells are 
 | Scalars | `bool`, `string`, `int`, `int8`, `int16`, `int32`, `int64`, `uint`, `uint8`, `uint16`, `uint32`, `uint64`, `uintptr`, `float32`, `float64`, `byte`, `rune`, `any`, `interface{}` |
 | Arrays / slices | `[]T`, `[N]T` |
 | Maps | `map[K]V` |
-| Extras | `date`, `float` (= `float64`), `object` (= `map[string]any`), `list` (= `[]any`) |
+| Extras | `date`, `float` (= `float64`), `object` (= `map[string]any`), `list` (= `[]any`), `null` |
 
 Composite values must be valid JSON in the cell, e.g. `[1,2,3]` or `{"a":"b"}`. Array length, element types, numeric ranges, map keys and map values are all validated.
 
@@ -179,38 +179,53 @@ Emptiness is controlled only by the header marker or `--required-by-default`:
 
 Unmarked headers use `-r/--required-by-default`. Empty values produce `0`, `false`, `""`, or `null` (for composite types).
 
-### Type matching (type-level ! / ?)
+### when(...) guards
 
-A trailing `!` / `?` on the type controls **type matching**, not emptiness:
-
-| Annotation | Meaning |
-|---|---|
-| `int` / `int!` | must be an int; a mismatch is an error |
-| `int?` | only apply this rule when the value is an int; otherwise skip |
+`when(...)` at the start of a rule enables it only when the conditions match:
 
 ```text
-id!                        # required field
-name?                      # optional field
+when(type=1) effects:[]int:ref(effect.id)
+when(type!=0, level>=10) int:gt(0)
+when(typeof($) = [3]int) ...
+when(typeof(kind.a) = int) ...
+```
 
-int:lt(1)                  # must be int and < 1
-int?:lt(1)                 # validate < 1 only when the value is an int
-int?:lt(1);string?:minlen(1)
+- `type` — raw value of another column
+- `kind.a` / `kind[0]` — JSONPath on another column
+- `$.a` — JSONPath on the current cell
+- `$` — the current cell
+- `typeof(ref) = <type expression>` — structural JSON type check
+- Operators: `=`, `==`, `!=`, `>`, `>=`, `<`, `<=`; `typeof` only supports `=`, `==`, `!=`
+- Conditions inside `when(...)` are AND; `;` still separates rules
+- `and(...)`, `or(...)`, `not(...)` can nest; `not(a,b)` means `NOT (a AND b)`
+- `type(...)` is accepted as an alias for `typeof(...)`
+- Type expressions support `[3]int`, `[]T`, `map[K]V`, `[2][2]int`, etc.
+- Raw non-JSON cells are treated as `string`; `TRUE`/`FALSE` are treated as booleans
+- Missing column or invalid JSON when a path is requested is an error; an empty path match means the guard is false; multiple matches use any-match
+
+```text
+when(type=1) effects:[]int:ref(effect.id)
+when(typeof($) = int) gte(0)
+when(typeof($) = string) len(2,4)
+when(type=1, typeof(kind.a) = [3]int) ...
+when(or(type=1, level>=10)) ...
+when(not(type=1)) ...
 ```
 
 ### Validation rules
 
 ```ebnf
-fieldSpec = rule { ";" rule }
-rule      = [ selector ":" ] [ type [ "!" | "?" ] [ ":" checks ] ]
-checks    = check { "," check }
+fieldSpec  = rule { ";" rule }
+rule       = [ "when(" conditions ")" ] [ selector ":" ] [ type [ ":" checks ] ]
+conditions = condition { "," condition }
+checks     = check { "," check }
 ```
 
 | Syntax | Meaning |
 |---|---|
 | `,` | all checks must pass (AND) |
 | `;` | multiple rules, all applied (AND; selectors may overlap) |
-| `!` | the type must match (default; explicit for clarity) |
-| `?` | apply this rule only when the value matches the type; otherwise skip |
+| `when(...)` | rule guard; all conditions must match (AND) |
 | selector omitted | applies to the field itself |
 | type omitted | validates each selected node as-is |
 
@@ -218,7 +233,7 @@ Selectors are an RFC 9535 subset: `$`, `.field`, `['field']`/`["field"]`, `[0]`,
 
 ```text
 int:gt(0),lt(100)
-int?:lt(1);string?:minlen(1)
+when(typeof($) = int) gt(0);when(typeof($) = string) len(1)
 $[*][1::3]:string:ref(item.id)
 $[0]:int:gte(0);$[2]:int32:gt(0)
 [4]int32:pad,gte(0)
@@ -227,7 +242,7 @@ $[0]:int:gte(0);$[2]:int32:gt(0)
 - Selectors only **locate** the values a rule validates; they are not output selectors.
 - Output is always the whole field, rewritten in place: selected nodes are converted and written back, untouched parts stay as-is.
 - Rules run in order; later overlapping assignments win.
-- A matched conditional type still reports check failures; an unmatched one is skipped.
+- A skipped guard leaves that rule unapplied; if all rules are skipped the field keeps its original value.
 - Missing matches produce an empty nodelist (no error).
 - Scalar validators apply per element on arrays; `len`/`minlen`/`maxlen`/`unique`/`nonempty` apply to the collection.
 
@@ -274,7 +289,7 @@ Use `itemId` / `items` in the type row, just like built-in types; `#itemId` is a
 
 - **Parallel processing**: files are processed concurrently (up to `2 × CPU cores`)
 - **Prefix exclusion**: use `-x` (prefix match) to skip sheets & columns; repeatable
-- **Strong typing**: Go-style types, JSONPath selectors, validators, conditional types, `pad`, `ref`, and `types.yaml` reuse (`-t`, `-r`, `--types`)
+- **Strong typing**: Go-style types, JSONPath selectors, validators, condition guards, `pad`, `ref`, and `types.yaml` reuse (`-t`, `-r`, `--types`)
 - **Smart cell parsing**: JSON strings inside cells are deserialised in-place (`--parse-cell-json`)
 - **Stringify mode**: output untyped columns as raw strings (`--stringify-all`)
 - **Field name lowercasing**: `--lowercase` for case-insensitive consumers

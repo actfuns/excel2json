@@ -16,7 +16,7 @@ import (
 // Selectors only locate the nodes a rule applies to; they are not output
 // selectors. Every rule rewrites the whole field in place and the field value
 // is always returned as a whole.
-func (e *Engine) convertFieldSpec(spec *schema.Spec, cell string, required *bool) (any, error) {
+func (e *Engine) convertFieldSpec(spec *schema.Spec, cell string, required *bool, row *rowContext) (any, error) {
 	if cell == "" {
 		req := e.opts.RequireByDefault
 		if required != nil {
@@ -60,11 +60,12 @@ func (e *Engine) convertFieldSpec(spec *schema.Spec, cell string, required *bool
 		}
 	}
 
-	conditionalMatched := false
 	for ri, rule := range spec.Rules {
-		// The first matching conditional type wins; later conditional rules
-		// for the same whole field are skipped.
-		if rule.Conditional && conditionalMatched {
+		guarded, err := e.matchGuards(rule.Guards, cell, row)
+		if err != nil {
+			return nil, fmt.Errorf("rule %d: %w", ri+1, err)
+		}
+		if !guarded {
 			continue
 		}
 
@@ -86,17 +87,11 @@ func (e *Engine) convertFieldSpec(spec *schema.Spec, cell string, required *bool
 
 		for _, node := range nodes {
 			useJSON := jsonDecoded || rule.Selector != nil
-			value, matched, err := e.convertAndCheck(node.Value, rule.Type, rule.Checks, useJSON, rule.Conditional)
+			value, err := e.convertAndCheck(node.Value, rule.Type, rule.Checks, useJSON)
 			if err != nil {
 				return nil, fmt.Errorf("rule %d: %w", ri+1, err)
 			}
-			if !matched {
-				continue
-			}
 			assignments = append(assignments, assignment{path: node.Path, value: value})
-			if rule.Conditional {
-				conditionalMatched = true
-			}
 		}
 
 		for _, a := range assignments {
@@ -111,29 +106,20 @@ func (e *Engine) convertFieldSpec(spec *schema.Spec, cell string, required *bool
 	return root, nil
 }
 
-// convertAndCheck converts one node and runs its checks. When conditional is
-// true, a conversion failure means "this rule does not apply" and is reported
-// as matched=false rather than as an error.
-func (e *Engine) convertAndCheck(v any, typ *typing.Type, checks []*schema.Check, useJSON, conditional bool) (any, bool, error) {
+// convertAndCheck converts one node and runs its checks.
+func (e *Engine) convertAndCheck(v any, typ *typing.Type, checks []*schema.Check, useJSON bool) (any, error) {
 	prepared, checks, err := e.preparePad(v, typ, checks)
 	if err != nil {
-		if conditional {
-			return nil, false, nil
-		}
-		return nil, false, err
+		return nil, err
 	}
-
 	value, err := e.convertAlt(prepared, typ, useJSON)
 	if err != nil {
-		if conditional {
-			return nil, false, nil
-		}
-		return nil, false, err
+		return nil, err
 	}
 	if err := e.runner.RunChecks(value, checks); err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	return value, true, nil
+	return value, nil
 }
 
 func (e *Engine) convertAlt(v any, t *typing.Type, useJSON bool) (any, error) {

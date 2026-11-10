@@ -4,7 +4,7 @@ import "testing"
 
 func FuzzParse(f *testing.F) {
 	for _, s := range []string{
-		"int", "int8", "[]int", "[3]int", "map[string]any", "date", "list", "object", "int!", "int?",
+		"int", "int8", "[]int", "[3]int", "map[string]any", "date", "list", "object", "null",
 	} {
 		f.Add(s)
 	}

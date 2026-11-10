@@ -39,6 +39,11 @@ type Path struct {
 	segments []jpSegment
 }
 
+// IsRoot reports whether the path selects the document root ($).
+func (p *Path) IsRoot() bool {
+	return p == nil || len(p.segments) == 0
+}
+
 // Step identifies one step along a concrete document location.
 type Step struct {
 	Name    string

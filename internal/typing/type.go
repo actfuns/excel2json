@@ -24,6 +24,7 @@ const (
 	KindSlice
 	KindArray
 	KindMap
+	KindNull
 )
 
 // Type is a parsed subset of Go's type syntax.
@@ -32,18 +33,14 @@ const (
 //	int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr
 //	float32 float64 bool string any
 //	[]T  [N]T  map[K]V
-//	额外支持: date（日期）, float（float64 别名）, object（map[string]any 别名）, list（[]any 别名）
-//
-// Parse supports trailing !/? markers (nullable/required when used directly),
-// while field annotations reinterpret them as strict/conditional matching.
+//	额外支持: date（日期）, float（float64 别名）, object（map[string]any 别名）, list（[]any 别名）, null
 type Type struct {
-	Kind     Kind
-	Name     string // original name for scalar types
-	Bits     int    // bit width for int/uint/float
-	Length   int    // array length
-	Key      *Type
-	Elem     *Type
-	Nullable *bool // nil = use global default; true = ?, false = !
+	Kind   Kind
+	Name   string // original name for scalar types
+	Bits   int    // bit width for int/uint/float
+	Length int    // array length
+	Key    *Type
+	Elem   *Type
 }
 
 // Converter converts raw cell strings and decoded JSON values into typed values.
@@ -68,13 +65,6 @@ func (t *Type) String() string {
 	default:
 		s = t.Name
 	}
-	if t.Nullable != nil {
-		if *t.Nullable {
-			s += "?"
-		} else {
-			s += "!"
-		}
-	}
 	return s
 }
 
@@ -93,19 +83,8 @@ func Parse(s string) (*Type, error) {
 	}
 	norm := b.String()
 
-	// Nullability marker is only allowed at the very end of the type.
-	var nullable *bool
-	if strings.HasSuffix(norm, "!") {
-		v := false
-		nullable = &v
-		norm = strings.TrimSuffix(norm, "!")
-	} else if strings.HasSuffix(norm, "?") {
-		v := true
-		nullable = &v
-		norm = strings.TrimSuffix(norm, "?")
-	}
 	if norm == "" {
-		return nil, fmt.Errorf("invalid type %q: missing type before ?/!", s)
+		return nil, fmt.Errorf("invalid type %q: empty type", s)
 	}
 
 	norm = strings.ReplaceAll(norm, "interface{}", "any")
@@ -118,7 +97,6 @@ func Parse(s string) (*Type, error) {
 	if p.pos != len(p.s) {
 		return nil, fmt.Errorf("invalid type %q: unexpected %q", s, p.s[p.pos:])
 	}
-	t.Nullable = nullable
 	return t, nil
 }
 
@@ -211,6 +189,8 @@ func basicType(name string) (*Type, error) {
 		return &Type{Kind: KindString, Name: canonical}, nil
 	case "date":
 		return &Type{Kind: KindDate, Name: canonical}, nil
+	case "null":
+		return &Type{Kind: KindNull, Name: canonical}, nil
 	case "object":
 		return &Type{
 			Kind: KindMap,
@@ -282,6 +262,12 @@ func (c *Converter) ConvertString(cell string, t *Type) (any, error) {
 	case KindString:
 		return cell, nil
 
+	case KindNull:
+		if strings.TrimSpace(cell) == "null" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("expected null, got %q", cell)
+
 	case KindBool:
 		v, err := strconv.ParseBool(strings.ToLower(strings.TrimSpace(cell)))
 		if err != nil {
@@ -352,6 +338,12 @@ func (c *Converter) ConvertJSON(v any, t *Type) (any, error) {
 	switch t.Kind {
 	case KindAny:
 		return v, nil
+
+	case KindNull:
+		if v == nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("expected null, got %T", v)
 
 	case KindString:
 		s, ok := v.(string)

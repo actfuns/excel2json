@@ -53,6 +53,7 @@ func TestParse(t *testing.T) {
 		{"byte", "byte"},
 		{"rune", "rune"},
 		{"date", "date"},
+		{"null", "null"},
 		{"object", "map[string]any"},
 		{"list", "[]any"},
 		{"interface{}", "any"},
@@ -61,8 +62,6 @@ func TestParse(t *testing.T) {
 		{"map[string]string", "map[string]string"},
 		{"map[string][]int", "map[string][]int"},
 		{"[2][2]int", "[2][2]int"},
-		{"int!", "int!"},
-		{"[3]int?", "[3]int?"},
 	}
 	for _, c := range valid {
 		got, err := Parse(c.in)
@@ -80,7 +79,7 @@ func TestParse(t *testing.T) {
 		t.Errorf("nil type String = %q", nilType.String())
 	}
 
-	invalid := []string{"", "?", "!", "[]", "[3]", "map[string]", "map[string][]", "map[string", "int[", "[x]int", "intt", "map[string]interesting", "map[string]int["}
+	invalid := []string{"", "?", "!", "int?", "int!", "[3]int?", "[]", "[3]", "map[string]", "map[string][]", "map[string", "int[", "[x]int", "intt", "map[string]interesting", "map[string]int["}
 	for _, in := range invalid {
 		if _, err := Parse(in); err == nil {
 			t.Errorf("Parse(%q): expected error", in)

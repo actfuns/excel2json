@@ -13,7 +13,8 @@ import (
 // Spec is a parsed field annotation.
 //
 //	annotation = rule { ";" rule }
-//	rule       = [ selector ":" ] [ type [ "!" | "?" ] [ ":" checks ] ]
+//	rule       = [ "when(" conditions ")" ] [ selector ":" ] [ type [ ":" checks ] ]
+//	conditions = condition { "," condition }
 //	checks     = check { "," check }
 type Spec struct {
 	Rules []Rule
@@ -21,10 +22,10 @@ type Spec struct {
 
 // Rule is one semicolon-separated rule. A rule has at most one type.
 type Rule struct {
-	Selector    *jsonpath.Path
-	Type        *typing.Type
-	Checks      []*Check
-	Conditional bool // type?: apply only when the value matches this type
+	Selector *jsonpath.Path
+	Type     *typing.Type
+	Checks   []*Check
+	Guards   []Condition
 }
 
 // Parse parses an annotation, expanding named type references from defs.
@@ -60,7 +61,24 @@ func Parse(annotation string, defs map[string]string) (*Spec, error) {
 
 func parseRule(text string) (Rule, error) {
 	var rule Rule
-	rest := text
+	rest := strings.TrimSpace(text)
+
+	if strings.HasPrefix(strings.ToLower(rest), "when(") {
+		open := strings.IndexByte(rest, '(')
+		close, err := findMatchingParen(rest, open)
+		if err != nil {
+			return rule, err
+		}
+		guards, err := parseConditions(rest[open+1 : close])
+		if err != nil {
+			return rule, fmt.Errorf("invalid when condition: %w", err)
+		}
+		rule.Guards = guards
+		rest = strings.TrimSpace(rest[close+1:])
+		if rest == "" {
+			return rule, fmt.Errorf("when(...) without a rule")
+		}
+	}
 
 	if strings.HasPrefix(rest, "$") {
 		idx := findTopLevel(rest, ':')
@@ -83,78 +101,59 @@ func parseRule(text string) (Rule, error) {
 		return rule, fmt.Errorf("multi-type unions ('||') are not supported; use one type per rule")
 	}
 
-	typ, checks, conditional, err := parseTypeAndChecks(rest)
+	typ, checks, err := parseTypeAndChecks(rest)
 	if err != nil {
 		return rule, err
 	}
-	if conditional && rule.Selector != nil {
-		return rule, fmt.Errorf("conditional type '?' is only supported for whole-field rules")
-	}
 	rule.Type = typ
 	rule.Checks = checks
-	rule.Conditional = conditional
 	return rule, nil
 }
 
-func parseTypeAndChecks(text string) (*typing.Type, []*Check, bool, error) {
+func parseTypeAndChecks(text string) (*typing.Type, []*Check, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return nil, nil, false, fmt.Errorf("rule has no type or checks")
+		return nil, nil, fmt.Errorf("rule has no type or checks")
 	}
 
 	if idx := findTopLevel(text, ':'); idx >= 0 {
 		typeText := strings.TrimSpace(text[:idx])
 		checkText := strings.TrimSpace(text[idx+1:])
 		if typeText == "" {
-			return nil, nil, false, fmt.Errorf("missing type before ':' in %q", text)
+			return nil, nil, fmt.Errorf("missing type before ':' in %q", text)
 		}
-		base, conditional := stripTypeMarker(typeText)
-		t, err := typing.Parse(base)
+		t, err := typing.Parse(typeText)
 		if err != nil {
-			return nil, nil, false, fmt.Errorf("invalid type %q: %w", typeText, err)
+			return nil, nil, fmt.Errorf("invalid type %q: %w", typeText, err)
 		}
 		checks, err := parseChecks(checkText)
 		if err != nil {
-			return nil, nil, false, err
+			return nil, nil, err
 		}
 		if err := compileChecks(checks, t); err != nil {
-			return nil, nil, false, err
+			return nil, nil, err
 		}
-		return t, checks, conditional, nil
+		return t, checks, nil
 	}
 
-	base, conditional := stripTypeMarker(text)
-	if t, err := typing.Parse(base); err == nil {
-		return t, nil, conditional, nil
+	if t, err := typing.Parse(text); err == nil {
+		return t, nil, nil
 	}
 
-	name := strings.ToLower(strings.TrimSpace(base))
+	name := strings.ToLower(strings.TrimSpace(text))
 	if _, known := checkDefs[name]; !known && !isCombinator(name) && !isDirective(name) &&
 		!strings.ContainsAny(text, "(),") {
-		return nil, nil, false, fmt.Errorf("unknown type or named type %q (is types.yaml present?)", text)
+		return nil, nil, fmt.Errorf("unknown type or named type %q (is types.yaml present?)", text)
 	}
 
 	checks, err := parseChecks(text)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("invalid type or checks %q: %w", text, err)
+		return nil, nil, fmt.Errorf("invalid type or checks %q: %w", text, err)
 	}
 	if err := compileChecks(checks, nil); err != nil {
-		return nil, nil, false, err
+		return nil, nil, err
 	}
-	return nil, checks, false, nil
-}
-
-// stripTypeMarker removes a trailing '?' (conditional type rule) or '!'
-// (explicitly strict) from a type expression.
-func stripTypeMarker(s string) (string, bool) {
-	s = strings.TrimSpace(s)
-	if strings.HasSuffix(s, "?") {
-		return strings.TrimSpace(strings.TrimSuffix(s, "?")), true
-	}
-	if strings.HasSuffix(s, "!") {
-		return strings.TrimSpace(strings.TrimSuffix(s, "!")), false
-	}
-	return s, false
+	return nil, checks, nil
 }
 
 func expandTypeRefs(defs map[string]string, s string, seen map[string]bool) (string, error) {
@@ -205,7 +204,7 @@ func IsPlain(spec *Spec) bool {
 		return false
 	}
 	rule := spec.Rules[0]
-	return rule.Selector == nil && !rule.Conditional && len(rule.Checks) == 0 && rule.Type != nil
+	return rule.Selector == nil && len(rule.Guards) == 0 && len(rule.Checks) == 0 && rule.Type != nil
 }
 
 // ZeroForSpec returns the value emitted for an empty cell with this spec.

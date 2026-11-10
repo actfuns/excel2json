@@ -97,7 +97,7 @@ func (e *Engine) ConvertRow(sheet core.Sheet, rowIdx int, row []string) (map[str
 			continue
 		}
 
-		val, err := e.convertCellMeta(colType, cell, required)
+		val, err := e.convertCellMetaCtx(colType, cell, required, &rowContext{sheet: &sheet, row: row})
 		if err != nil {
 			return nil, fmt.Errorf("sheet [%s] data row %d, column %q: %w",
 				sheet.Name, rowIdx+1, header, err)
@@ -246,6 +246,10 @@ func (e *Engine) convertCell(colType, cell string) (any, error) {
 // convertCellMeta is convertCell with an optional field-level nullability
 // override taken from the header name (! or ?).
 func (e *Engine) convertCellMeta(colType, cell string, required *bool) (any, error) {
+	return e.convertCellMetaCtx(colType, cell, required, nil)
+}
+
+func (e *Engine) convertCellMetaCtx(colType, cell string, required *bool, row *rowContext) (any, error) {
 	if colType == "" {
 		if cell == "" {
 			if required != nil && *required {
@@ -261,8 +265,7 @@ func (e *Engine) convertCellMeta(colType, cell string, required *bool) (any, err
 		return nil, err
 	}
 
-	// Preserve the original fast path for plain type annotations. Type-level
-	// !/? markers are stripped by the annotation parser, so emptiness here is
+	// Preserve the original fast path for plain type annotations. Emptiness is
 	// controlled only by the header marker or --required-by-default.
 	if schema.IsPlain(spec) {
 		typ := spec.Rules[0].Type
@@ -279,5 +282,5 @@ func (e *Engine) convertCellMeta(colType, cell string, required *bool) (any, err
 		return e.convertTyped(typ.String(), cell)
 	}
 
-	return e.convertFieldSpec(spec, cell, required)
+	return e.convertFieldSpec(spec, cell, required, row)
 }

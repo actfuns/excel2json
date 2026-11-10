@@ -43,17 +43,10 @@ func (e *Engine) convertTyped(colType, cell string) (any, error) {
 		return nil, err
 	}
 	if cell == "" {
-		if e.isRequired(t) {
+		if e.opts.RequireByDefault {
 			return nil, fmt.Errorf("field cannot be empty (type %s)", t)
 		}
 		return typing.ZeroValue(t), nil
 	}
 	return e.conv.ConvertString(cell, t)
-}
-
-func (e *Engine) isRequired(t *typing.Type) bool {
-	if t.Nullable != nil {
-		return !*t.Nullable
-	}
-	return e.opts.RequireByDefault
 }

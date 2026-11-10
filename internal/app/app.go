@@ -95,7 +95,7 @@ func NewCommand(version string) *cobra.Command {
 	_ = root.Flags().MarkDeprecated("cell-json", "use --parse-cell-json instead")
 	root.Flags().BoolVar(&opts.StringifyAll, "all-string", false, "deprecated: use --stringify-all")
 	_ = root.Flags().MarkDeprecated("all-string", "use --stringify-all instead")
-	root.Flags().BoolVar(&opts.ListOutput, "array", false, "deprecated: use --list")
+	root.Flags().BoolVarP(&opts.ListOutput, "array", "a", false, "deprecated: use --list")
 	_ = root.Flags().MarkDeprecated("array", "use --list instead")
 	root.Flags().BoolVar(&opts.MergeSheets, "merge", false, "deprecated: use --merge-sheets")
 	_ = root.Flags().MarkDeprecated("merge", "use --merge-sheets instead")
