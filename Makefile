@@ -1,10 +1,12 @@
-BINARY := excel2json
-CMD    := ./cmd/excel2json
+BINARY  := excel2json
+CMD     := ./cmd/excel2json
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -X main.version=$(VERSION)
 
 .PHONY: build test race cover vet fmt lint clean
 
 build:
-	go build -o $(BINARY) $(CMD)
+	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
 
 test:
 	go test ./...

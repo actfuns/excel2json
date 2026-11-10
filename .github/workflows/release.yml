@@ -50,7 +50,11 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           suffix="${{ matrix.binary-suffix || '' }}"
-          go build -o excel2json${suffix} ./cmd/excel2json
+          go build -trimpath -ldflags "-X main.version=${GITHUB_REF_NAME}" -o excel2json${suffix} ./cmd/excel2json
+
+      - name: Test
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: go test ./...
 
       - name: Smoke test
         shell: bash
@@ -61,6 +65,8 @@ jobs:
           # Only smoke-test if built for the native platform (skip cross-compiled builds)
           if [ "$GOOS" = "$(go env GOHOSTOS)" ] && [ "$GOARCH" = "$(go env GOHOSTARCH)" ]; then
             "$bin" --help
+            "$bin" --version | grep -F "${GITHUB_REF_NAME}" >/dev/null
+            echo "Version: $("$bin" --version)"
           else
             echo "Skipping smoke test for cross-compiled binary ($GOOS/$GOARCH on $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
           fi
