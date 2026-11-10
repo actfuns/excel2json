@@ -732,7 +732,7 @@ func TestRunStrictTagsCSV(t *testing.T) {
 	assertFile(t, filepath.Join(out, "Shop.csv"), "id,name\n1,x\n")
 }
 
-func TestRunTagDuplicateSheetBase(t *testing.T) {
+func TestRunDuplicateSheetBaseRejected(t *testing.T) {
 	f := excelize.NewFile()
 	for _, s := range []struct {
 		name string
@@ -757,29 +757,22 @@ func TestRunTagDuplicateSheetBase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := filepath.Join(t.TempDir(), "out") + "/"
-	opts := core.Options{
-		HeaderRow:  0,
-		TypeRow:    1,
-		DataRow:    2,
-		ListOutput: true,
-		Format:     "json",
-		NameTmpl:   "{sheet}",
-		OutputPath: out,
-		Tag:        "c",
-	}
-	if err := Run([]string{workbook}, opts); err != nil {
-		t.Fatal(err)
-	}
-	assertFile(t, filepath.Join(out, "Shop.json"), `[{"id":1}]`)
-
-	opts.Tag = ""
-	opts.OutputPath = filepath.Join(t.TempDir(), "out-no-tag") + "/"
-	if err := Run([]string{workbook}, opts); err == nil {
-		t.Error("duplicate sheet output names without --tag: expected error")
+	for _, tag := range []string{"c", ""} {
+		opts := core.Options{
+			HeaderRow:  0,
+			TypeRow:    1,
+			DataRow:    2,
+			ListOutput: true,
+			Format:     "json",
+			NameTmpl:   "{sheet}",
+			OutputPath: filepath.Join(t.TempDir(), "out") + "/",
+			Tag:        tag,
+		}
+		if err := Run([]string{workbook}, opts); err == nil || !strings.Contains(err.Error(), "output name collision") {
+			t.Errorf("Run(tag=%q) = %v, want output name collision", tag, err)
+		}
 	}
 }
-
 func TestRunTagRefUsesTaggedColumn(t *testing.T) {
 	workbook := makeSheetWorkbook(t, "Shop",
 		[]string{"id@s", "sid@c"},

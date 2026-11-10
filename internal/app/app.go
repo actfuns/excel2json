@@ -177,8 +177,8 @@ func Run(files []string, opts core.Options) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", in.path, err)
 		}
-		for _, sheet := range selected {
-			selectedSheets++
+		selectedSheets += len(selected)
+		for _, sheet := range in.sheets {
 			name := core.SanitizeName(core.ExpandNameTemplate(in.opts.NameTmpl, in.opts.SourceStem, sheet.Name))
 			if prev, exists := outputNames[name]; exists {
 				return fmt.Errorf("output name collision %q between %s and %s:%s (check --name-tpl)",

@@ -14,6 +14,8 @@ A Go port of the [excel2json](https://github.com/neil3d/excel2json) C# tool with
 go install github.com/actfuns/excel2json/cmd/excel2json@latest
 ```
 
+Requires Go 1.25.10 or newer.
+
 Or build from source:
 
 ```bash
@@ -125,6 +127,8 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 - Dict mode keys by the first exported column
 - Column base names must be unique within a sheet, case-insensitively and independent of tags (`reward@c` + `reward@s` is invalid); `-x` excluded columns do not count
 - `ref(...)` validates against all loaded sheets/columns, independent of `--tag`; `-x` excluded sheets/columns are not loaded and cannot be referenced
+- Output names are checked across all loaded sheets, not just the selected tag; same output name is always an error
+- Sheet tags do not make output names unique: `Shop@c` + `Shop@s` still need distinct base names or a `--name-tpl` that distinguishes them
 - Workbooks/sheets with no matching columns are skipped; if nothing matches at all, `--tag` reports a clear error
 - Tags may contain letters, digits, `_` and `-`; a trailing `@...` suffix is reserved for tags
 - Tags and required markers can be combined: `reward@c!`, `reward!@s`
@@ -360,7 +364,7 @@ make vet        # go vet ./...
 make lint       # golangci-lint
 ```
 
-Requires Go 1.25+.
+Requires Go 1.25.10+.
 
 ---
 

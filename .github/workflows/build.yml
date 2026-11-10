@@ -34,8 +34,18 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Lint
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          "$(go env GOPATH)/bin/golangci-lint" run ./...
+
       - name: Test
         run: go test ./...
+
+      - name: Race
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race ./...
 
       - name: Build
         shell: bash

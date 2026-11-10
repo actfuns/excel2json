@@ -12,6 +12,8 @@ Go 语言重写的 [excel2json](https://github.com/neil3d/excel2json) C# 工具�
 go install github.com/actfuns/excel2json/cmd/excel2json@latest
 ```
 
+需要 Go 1.25.10 或更高版本。
+
 或从源码编译：
 
 ```bash
@@ -123,6 +125,8 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 - 字典模式默认使用第一个导出的列作为 key
 - 同一 Sheet 内列的基础名必须唯一（忽略大小写），与 tag 无关（`reward@c` + `reward@s` 不合法）；`-x` 排除的列不参与判断
 - `ref(...)` 基于所有已加载的 sheet/列校验，不受 `--tag` 影响；`-x` 排除的 sheet/列不会加载，也不能被引用
+- 输出名会基于所有已加载 Sheet 检查，不只检查当前 tag；同名输出一律报错
+- Sheet tag 不会让输出名自动变唯一：`Shop@c` + `Shop@s` 仍需要不同的基础名，或用能区分的 `--name-tpl`
 - 没有匹配列的工作簿/Sheet 会跳过；全部无匹配时 `--tag` 会给出明确错误
 - 标签允许字母、数字、`_`、`-`；字段名末尾的 `@...` 保留给标签使用
 - 标签可以和必填标记组合：`reward@c!`、`reward!@s`
@@ -402,7 +406,7 @@ make vet        # go vet ./...
 make lint       # golangci-lint
 ```
 
-依赖：Go 1.25+。
+依赖：Go 1.25.10+。
 
 ---
 

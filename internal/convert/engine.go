@@ -53,13 +53,13 @@ func (e *Engine) FilterSheets(sheets []core.Sheet) ([]core.Sheet, error) {
 		if e.sheetExcludedByPrefix(s) {
 			continue
 		}
+		if len(s.Headers) == 0 || len(s.Rows) == 0 {
+			continue
+		}
 		if err := e.validateSheetColumns(s); err != nil {
 			return nil, err
 		}
 		if !core.TagMatches(s.Tags, e.opts.Tag) {
-			continue
-		}
-		if len(s.Headers) == 0 || len(s.Rows) == 0 {
 			continue
 		}
 		if e.opts.Tag != "" && !e.hasSelectedColumn(s) {
