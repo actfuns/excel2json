@@ -464,7 +464,7 @@ func TestRunTagFiltering(t *testing.T) {
 	if err := Run([]string{workbook}, opts); err != nil {
 		t.Fatal(err)
 	}
-	assertFile(t, filepath.Join(dir, "csv", "tags.csv"), "id,reward,common\n1,10,30\n")
+	assertFile(t, filepath.Join(dir, "csv", "Shop.csv"), "id,reward,common\n1,10,30\n")
 	if _, err := os.Stat(filepath.Join(dir, "csv", "Server.csv")); !os.IsNotExist(err) {
 		t.Errorf("server sheet should not be exported to client CSV, stat err = %v", err)
 	}
@@ -523,27 +523,282 @@ func TestRunStrictTags(t *testing.T) {
 	assertFile(t, filepath.Join(out, "Shop.json"), `[{"common":30,"id":1,"reward":10}]`)
 }
 
-func TestSheetMatchesTag(t *testing.T) {
-	sheet := core.Sheet{
-		Name:       "Shop",
-		Headers:    []string{"id", "reward"},
-		ColumnTags: [][]string{nil, {"s"}},
+func makeTaggedInput(t *testing.T, sheetName, header string) string {
+	t.Helper()
+	f := excelize.NewFile()
+	if err := f.SetSheetName("Sheet1", sheetName); err != nil {
+		t.Fatal(err)
 	}
-	if !sheetMatchesTag(sheet, "c", nil) {
-		t.Error("untagged id should keep sheet common for c")
+	rows := [][]any{
+		{header},
+		{"int"},
+		{"1"},
 	}
-	sheet.ColumnTags[0] = []string{"s"}
-	if sheetMatchesTag(sheet, "c", nil) {
-		t.Error("sheet with only s columns should not match c")
+	for i, r := range rows {
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetSheetRow(sheetName, cell, &r); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !sheetMatchesTag(sheet, "s", nil) {
-		t.Error("sheet with s columns should match s")
+	path := filepath.Join(t.TempDir(), "input.xlsx")
+	if err := f.SaveAs(path); err != nil {
+		t.Fatal(err)
 	}
-	if !sheetMatchesTag(core.Sheet{Name: "Empty"}, "", nil) {
-		t.Error("empty tag should match")
+	return path
+}
+
+func TestRunTagNoMatch(t *testing.T) {
+	workbook := makeTaggedInput(t, "Shop", "reward@s")
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		OutputPath: filepath.Join(t.TempDir(), "out") + "/",
+		Tag:        "c",
 	}
-	commentOnly := core.Sheet{Name: "S", Headers: []string{"#note"}}
-	if sheetMatchesTag(commentOnly, "c", []string{"#"}) {
-		t.Error("sheet with only excluded columns should not match")
+	err := Run([]string{workbook}, opts)
+	if err == nil || !strings.Contains(err.Error(), `tag "c" matched no sheets or columns`) {
+		t.Fatalf("Run = %v, want clear tag mismatch error", err)
 	}
+}
+
+func TestRunTagSkipsUnmatchedWorkbook(t *testing.T) {
+	client := makeTaggedInput(t, "Shop@c", "reward@c")
+	server := makeTaggedInput(t, "Server@s", "reward@s")
+	out := filepath.Join(t.TempDir(), "out") + "/"
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		NameTmpl:   "{sheet}",
+		OutputPath: out,
+		Tag:        "c",
+	}
+	if err := Run([]string{client, server}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.json"), `[{"reward":1}]`)
+	if _, err := os.Stat(filepath.Join(out, "Server.json")); !os.IsNotExist(err) {
+		t.Errorf("server-only workbook should be skipped, stat err = %v", err)
+	}
+}
+
+func TestRunNoTagExportsTaggedFields(t *testing.T) {
+	workbook := makeTaggedWorkbook(t)
+	out := filepath.Join(t.TempDir(), "out") + "/"
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		NameTmpl:   "{sheet}",
+		OutputPath: out,
+	}
+	if err := Run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.json"), `[{"common":30,"id":1,"reward":10}]`)
+	assertFile(t, filepath.Join(out, "Server.json"), `[{"common":30,"id":1,"reward":20}]`)
+}
+
+func TestRunTagRefUsesFullWorkbook(t *testing.T) {
+	f := excelize.NewFile()
+	for _, s := range []struct {
+		name   string
+		header string
+		typ    string
+	}{
+		{"Server@s", "id", "int"},
+		{"Client@c", "sid", "int:ref(Server.id)"},
+	} {
+		if _, err := f.NewSheet(s.name); err != nil {
+			t.Fatal(err)
+		}
+		rows := [][]any{{s.header}, {s.typ}, {"1"}}
+		for i, r := range rows {
+			cell, _ := excelize.CoordinatesToCellName(1, i+1)
+			if err := f.SetSheetRow(s.name, cell, &r); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	workbook := filepath.Join(t.TempDir(), "ref-tags.xlsx")
+	if err := f.SaveAs(workbook); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(t.TempDir(), "out") + "/"
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		NameTmpl:   "{sheet}",
+		OutputPath: out,
+		Tag:        "c",
+	}
+	if err := Run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Client.json"), `[{"sid":1}]`)
+	if _, err := os.Stat(filepath.Join(out, "Server.json")); !os.IsNotExist(err) {
+		t.Errorf("server sheet should not be exported, stat err = %v", err)
+	}
+}
+
+func makeSheetWorkbook(t *testing.T, sheet string, headers, types, data []string) string {
+	t.Helper()
+	f := excelize.NewFile()
+	if err := f.SetSheetName("Sheet1", sheet); err != nil {
+		t.Fatal(err)
+	}
+	rows := [][]string{headers, types, data}
+	for i, row := range rows {
+		vals := make([]any, len(row))
+		for j, v := range row {
+			vals[j] = v
+		}
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetSheetRow(sheet, cell, &vals); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "input.xlsx")
+	if err := f.SaveAs(path); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRunTagKeyColumn(t *testing.T) {
+	workbook := makeSheetWorkbook(t, "Shop",
+		[]string{"id@s", "name@c"},
+		[]string{"int", "string"},
+		[]string{"1", "x"},
+	)
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		Format:     "json",
+		OutputPath: filepath.Join(t.TempDir(), "out") + "/",
+		Tag:        "c",
+		KeyColumn:  "id",
+	}
+	if err := Run([]string{workbook}, opts); err == nil {
+		t.Error("key column tagged s under --tag c: expected error")
+	}
+
+	common := makeSheetWorkbook(t, "Shop",
+		[]string{"id", "name@c"},
+		[]string{"int", "string"},
+		[]string{"1", "x"},
+	)
+	out := filepath.Join(t.TempDir(), "out") + "/"
+	opts.OutputPath = out
+	opts.NameTmpl = "{sheet}"
+	if err := Run([]string{common}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.json"), `{"1":{"id":1,"name":"x"}}`)
+}
+
+func TestRunStrictTagsCSV(t *testing.T) {
+	workbook := makeSheetWorkbook(t, "Shop@c",
+		[]string{"id@c", "name@c"},
+		[]string{"int", "string"},
+		[]string{"1", "x"},
+	)
+	out := filepath.Join(t.TempDir(), "out") + "/"
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		Format:     "csv",
+		NameTmpl:   "{sheet}",
+		OutputPath: out,
+		Tag:        "c",
+		StrictTags: true,
+	}
+	if err := Run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.csv"), "id,name\n1,x\n")
+}
+
+func TestRunTagDuplicateSheetBase(t *testing.T) {
+	f := excelize.NewFile()
+	for _, s := range []struct {
+		name string
+		tag  string
+	}{
+		{"Shop@c", "c"},
+		{"Shop@s", "s"},
+	} {
+		if _, err := f.NewSheet(s.name); err != nil {
+			t.Fatal(err)
+		}
+		rows := [][]any{{"id@" + s.tag}, {"int"}, {"1"}}
+		for i, r := range rows {
+			cell, _ := excelize.CoordinatesToCellName(1, i+1)
+			if err := f.SetSheetRow(s.name, cell, &r); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	workbook := filepath.Join(t.TempDir(), "dupe.xlsx")
+	if err := f.SaveAs(workbook); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(t.TempDir(), "out") + "/"
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		NameTmpl:   "{sheet}",
+		OutputPath: out,
+		Tag:        "c",
+	}
+	if err := Run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.json"), `[{"id":1}]`)
+
+	opts.Tag = ""
+	opts.OutputPath = filepath.Join(t.TempDir(), "out-no-tag") + "/"
+	if err := Run([]string{workbook}, opts); err == nil {
+		t.Error("duplicate sheet output names without --tag: expected error")
+	}
+}
+
+func TestRunTagRefUsesTaggedColumn(t *testing.T) {
+	workbook := makeSheetWorkbook(t, "Shop",
+		[]string{"id@s", "sid@c"},
+		[]string{"int", "int:ref(Shop.id)"},
+		[]string{"1", "1"},
+	)
+	out := filepath.Join(t.TempDir(), "out") + "/"
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		NameTmpl:   "{sheet}",
+		OutputPath: out,
+		Tag:        "c",
+	}
+	if err := Run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.json"), `[{"sid":1}]`)
 }

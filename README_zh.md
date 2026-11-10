@@ -84,6 +84,7 @@ excel2json data.xlsx -t 1 --required-by-default
 | `-x` | `--exclude` | `nil` | 跳过指定前缀的 sheet 和列（可重复） |
 | | `--tag` | `""` | 只导出带该标签的 sheet/列；无标签视为公共 |
 | | `--strict-tags` | `false` | 配合 `--tag`，导出无标签的 sheet/列时报错 |
+| | `--strict-fields` | `false` | 输出字段名重复时报错（默认后者覆盖前者） |
 | | `--parse-cell-json` | `false` | 解析无类型列单元格中的 JSON 字符串 |
 | | `--stringify-all` | `false` | 无类型列全部输出为字符串 |
 | | `--types` | `""` | types.yaml / types.yml 路径（省略时自动查找） |
@@ -122,7 +123,10 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 - `--strict-tags` 下，被导出的 sheet/列若没有标签则报错
 - 字典模式默认使用第一个导出的列作为 key
 - 同一 target 下两个列最终 key 相同会报错
-- 标签允许字母、数字、`_`、`-`；sheet/列名中的 `@` 保留给标签使用
+- `ref(...)` 始终基于完整工作簿校验，不受 `--tag`/`-x` 导出过滤影响
+- 没有匹配列的工作簿/Sheet 会跳过；全部无匹配时 `--tag` 会给出明确错误
+- 标签允许字母、数字、`_`、`-`；字段名末尾的 `@...` 保留给标签使用
+- `--strict-fields` 可让普通重复字段名也报错
 - 标签可以和必填标记组合：`reward@c!`、`reward!@s`
 - 不传 `--tag` 时导出全部 sheet/列；但去掉标签后同名 key 冲突仍会报错
 
@@ -167,8 +171,8 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 
 ### CSV
 
-- **单 sheet**：写入指定路径
-- **多 sheet**：自动创建 `{文件名}_{sheet名}.csv` 文件
+- **`-o file.csv`**：所有 sheet 合并写入一个文件
+- **`-o dir/`**：每个 sheet 按 `--name-tpl` 生成独立文件（默认 `{file}_{sheet}.csv`），只剩一个 sheet 时也一样
 
 ---
 
@@ -176,8 +180,8 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 
 | 输入 | 无 `-o` | `-o <文件>` | `-o <目录>/` |
 |---|---|---|---|
-| 单个文件 | stdout | 写入单个文件（多 sheet 自动包装/分段） | 按 sheet 拆分，或 `--merge-sheets` 合并为 `{目录}/{文件名}.{格式}` |
-| 多个文件 | stdout（依次） | 当作目录 | 按 sheet 拆分，或 `--merge-sheets` 合并 |
+| 单个文件 | stdout | 写入单个文件（多 sheet 自动包装/分段） | 按 `--name-tpl` 拆分，或 `-m` 合并为 `{目录}/{文件名}.{格式}` |
+| 多个文件 | stdout（依次） | 当作目录 | 按 `--name-tpl` 拆分，或 `-m` 合并为 `{目录}/{文件名}.{格式}` |
 | 目录 | stdout（依次） | 当作目录 | 同上 |
 
 `-o <文件>` 表示「一个输出文件」，多个 sheet 时会合并。没有扩展名的路径（如 `-o out/conf`）或以 `/` 结尾的路径视为目录；目录默认拆分，`--merge-sheets` 才合并。

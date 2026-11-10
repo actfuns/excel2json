@@ -86,6 +86,7 @@ excel2json data.xlsx -t 1 --required-by-default
 | `-x` | `--exclude` | `nil` | Skip sheets & columns with prefix (repeatable) |
 | | `--tag` | `""` | Only export sheets/columns with this tag; untagged = common |
 | | `--strict-tags` | `false` | With `--tag`, error on untagged sheets/columns |
+| | `--strict-fields` | `false` | Error on duplicate output field names (default: last wins) |
 | | `--parse-cell-json` | `false` | Parse JSON strings inside untyped cells |
 | | `--stringify-all` | `false` | Stringify untyped values |
 | | `--types` | `""` | types.yaml / types.yml path (auto-discovered next to the input or in cwd) |
@@ -124,7 +125,10 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 - `--strict-tags` makes an untagged exported sheet/column an error
 - Dict mode keys by the first exported column
 - Two selected columns with the same output key are an error
-- Tags may contain letters, digits, `_` and `-`; `@` in a sheet/column name is reserved for tags
+- `ref(...)` always validates against the full workbook, independent of `--tag`/`-x`; export filtering does not reduce ref context
+- Workbooks/sheets with no matching columns are skipped; if nothing matches at all, `--tag` reports a clear error
+- Tags may contain letters, digits, `_` and `-`; a trailing `@...` suffix is reserved for tags
+- `--strict-fields` makes ordinary duplicate field names an error as well
 - Tags and required markers can be combined: `reward@c!`, `reward!@s`
 - Without `--tag`, all sheets/columns are exported; duplicate keys caused by tag-stripped names still error
 
@@ -169,8 +173,8 @@ Use `-m` to merge all sheets into one file:
 
 ### CSV
 
-- **Single sheet**: written to the specified path.
-- **Multiple sheets**: creates `{stem}_{sheetName}.csv` files.
+- **`-o file.csv`**: all sheets are merged into one file.
+- **`-o dir/`**: each sheet gets its own file named by `--name-tpl` (default `{file}_{sheet}.csv`), including when only one sheet matches.
 
 ---
 
@@ -178,8 +182,8 @@ Use `-m` to merge all sheets into one file:
 
 | Input(s) | `-o` omitted | `-o <file>` | `-o <dir>/` |
 |---|---|---|---|
-| Single file | stdout | write to file | `{dir}/{stem}.{format}` |
-| Multiple files | stdout (sequentially) | treated as directory | `{dir}/{stem}.{format}` |
+| Single file | stdout | write to file | split per sheet by `--name-tpl`, or `-m` → `{dir}/{stem}.{format}` |
+| Multiple files | stdout (sequentially) | treated as directory | split per sheet by `--name-tpl`, or `-m` → `{dir}/{stem}.{format}` |
 | Directory | stdout (sequentially) | treated as directory | same as above |
 
 ---

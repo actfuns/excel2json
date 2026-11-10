@@ -253,3 +253,18 @@ func TestCSVColumnsDuplicateTagged(t *testing.T) {
 		t.Error("duplicate tagged columns: expected error")
 	}
 }
+
+func TestStrictFields(t *testing.T) {
+	sheet := core.Sheet{
+		Name:    "S",
+		Headers: []string{"id", "id"},
+		Types:   []string{"int", "int"},
+		Rows:    [][]string{{"1", "2"}},
+	}
+	if _, err := New(core.Options{ListOutput: true}).ConvertSheet(sheet); err != nil {
+		t.Fatalf("default duplicate fields should allow last-wins: %v", err)
+	}
+	if _, err := New(core.Options{ListOutput: true, StrictFields: true}).ConvertSheet(sheet); err == nil {
+		t.Error("strict-fields with duplicate headers: expected error")
+	}
+}

@@ -9,9 +9,9 @@ import (
 type Sheet struct {
 	Name       string
 	RawName    string     // original sheet name including @tags
-	Tags       []string   // sheet-level tags from the @tag suffix
+	Tags       []string   // sheet-level tags from the @... suffix
 	Headers    []string   // column names with !/? markers and @tags stripped
-	ColumnTags [][]string // per-column tags from the @tag suffix
+	ColumnTags [][]string // per-column tags from the @... suffix
 	Types      []string   // column type annotations
 	Required   []*bool    // per-column nullability; nil means unset
 	Rows       [][]string // data rows
@@ -45,8 +45,10 @@ func SplitFieldMarker(name string) (string, *bool) {
 
 // SplitTagSuffix extracts a trailing @tag1,tag2 suffix from a sheet or column
 // name. Tags may contain letters, digits, underscores and hyphens. The suffix
-// is only recognised when every comma-separated token is non-empty and valid.
+// is only recognised when it is the last part of the name and every
+// comma-separated token is non-empty and valid.
 func SplitTagSuffix(name string) (string, []string, bool) {
+	name = strings.TrimSpace(name)
 	i := strings.LastIndexByte(name, '@')
 	if i <= 0 || i == len(name)-1 {
 		return name, nil, false
@@ -60,7 +62,7 @@ func SplitTagSuffix(name string) (string, []string, bool) {
 		}
 		tags = append(tags, strings.ToLower(tag))
 	}
-	return name[:i], tags, true
+	return strings.TrimSpace(name[:i]), tags, true
 }
 
 func validTag(tag string) bool {

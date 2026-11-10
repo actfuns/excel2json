@@ -118,8 +118,8 @@ func (e *Engine) ConvertRow(sheet core.Sheet, rowIdx int, row []string) (map[str
 		}
 
 		name := e.fieldName(header, ci)
-		if _, exists := out[name]; exists && e.checkDuplicateKeys(sheet) {
-			return nil, fmt.Errorf("duplicate output field %q after tag filtering (sheet %q, data row %d)",
+		if _, exists := out[name]; exists && e.errorOnDuplicateFields(sheet) {
+			return nil, fmt.Errorf("duplicate output field %q (sheet %q, data row %d)",
 				name, sheet.Name, rowIdx+1)
 		}
 		out[name] = val
@@ -143,8 +143,8 @@ func (e *Engine) CSVColumns(sheet core.Sheet) ([]CSVColumn, error) {
 			continue
 		}
 		name := e.fieldName(header, ci)
-		if seen[name] && e.checkDuplicateKeys(sheet) {
-			return nil, fmt.Errorf("duplicate output field %q after tag filtering (sheet %q)", name, sheet.Name)
+		if seen[name] && e.errorOnDuplicateFields(sheet) {
+			return nil, fmt.Errorf("duplicate output field %q (sheet %q)", name, sheet.Name)
 		}
 		seen[name] = true
 		cols = append(cols, CSVColumn{Index: ci, Name: name})
@@ -242,8 +242,8 @@ func (e *Engine) hasSelectedColumn(sheet core.Sheet) bool {
 	return false
 }
 
-func (e *Engine) checkDuplicateKeys(sheet core.Sheet) bool {
-	return e.opts.Tag != "" || sheetHasTags(sheet)
+func (e *Engine) errorOnDuplicateFields(sheet core.Sheet) bool {
+	return e.opts.StrictFields || e.opts.Tag != "" || sheetHasTags(sheet)
 }
 
 func sheetHasTags(sheet core.Sheet) bool {

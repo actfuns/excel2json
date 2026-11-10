@@ -79,6 +79,7 @@ func NewCommand(version string) *cobra.Command {
 	root.Flags().StringArrayVarP(&opts.ExcludePrefixes, "exclude", "x", nil, "skip sheets & columns with prefix (repeatable)")
 	root.Flags().StringVar(&opts.Tag, "tag", "", "only export sheets/columns with this tag; untagged = common")
 	root.Flags().BoolVar(&opts.StrictTags, "strict-tags", false, "with --tag, error on untagged sheets/columns")
+	root.Flags().BoolVar(&opts.StrictFields, "strict-fields", false, "error on duplicate output field names")
 	root.Flags().BoolVar(&opts.ParseCellJSON, "parse-cell-json", false, "parse JSON strings inside cells")
 	root.Flags().BoolVar(&opts.StringifyAll, "stringify-all", false, "convert all values to strings")
 	root.Flags().BoolVar(&opts.RequireByDefault, "required-by-default", false, "treat fields without !/? as required")
@@ -159,24 +160,36 @@ func Run(files []string, opts core.Options) error {
 	}
 
 	contextSheets := make([]convert.SheetContext, 0)
-	outputNames := make(map[string]string)
 	for _, in := range inputs {
 		for _, sheet := range in.sheets {
-			if in.opts.Tag != "" && !sheetMatchesTag(sheet, in.opts.Tag, in.opts.ExcludePrefixes) {
-				continue
-			}
 			name := core.SanitizeName(core.ExpandNameTemplate(in.opts.NameTmpl, in.opts.SourceStem, sheet.Name))
-			if prev, exists := outputNames[name]; exists {
-				return fmt.Errorf("output name collision %q between %s and %s:%s (check --name-tpl)",
-					name, prev, in.path, sheet.Name)
-			}
-			outputNames[name] = in.path + ":" + sheet.Name
 			contextSheets = append(contextSheets, convert.SheetContext{
 				Sheet:      sheet,
 				OutputName: name,
 				TypeDefs:   in.opts.TypeDefs,
 			})
 		}
+	}
+
+	outputNames := make(map[string]string)
+	selectedSheets := 0
+	for _, in := range inputs {
+		selected, err := convert.New(in.opts).FilterSheets(in.sheets)
+		if err != nil {
+			return fmt.Errorf("%s: %w", in.path, err)
+		}
+		for _, sheet := range selected {
+			selectedSheets++
+			name := core.SanitizeName(core.ExpandNameTemplate(in.opts.NameTmpl, in.opts.SourceStem, sheet.Name))
+			if prev, exists := outputNames[name]; exists {
+				return fmt.Errorf("output name collision %q between %s and %s:%s (check --name-tpl)",
+					name, prev, in.path, sheet.Name)
+			}
+			outputNames[name] = in.path + ":" + sheet.Name
+		}
+	}
+	if opts.Tag != "" && selectedSheets == 0 {
+		return fmt.Errorf("tag %q matched no sheets or columns", opts.Tag)
 	}
 
 	// Pass 2: export each workbook with the shared ref context.
@@ -203,43 +216,19 @@ func Run(files []string, opts core.Options) error {
 		return err
 	}
 
+	exported := false
 	for _, r := range results {
+		if r.exported {
+			exported = true
+		}
 		for _, line := range r.lines {
 			fmt.Printf("→ %s\n", line)
 		}
 	}
+	if opts.Tag != "" && !exported {
+		return fmt.Errorf("tag %q matched no exportable sheets", opts.Tag)
+	}
 	return nil
-}
-
-func sheetMatchesTag(sheet core.Sheet, tag string, excludePrefixes []string) bool {
-	if !core.TagMatches(sheet.Tags, tag) {
-		return false
-	}
-	if tag == "" {
-		return true
-	}
-	for ci, header := range sheet.Headers {
-		if hasExcludedPrefix(header, excludePrefixes) {
-			continue
-		}
-		var tags []string
-		if ci < len(sheet.ColumnTags) {
-			tags = sheet.ColumnTags[ci]
-		}
-		if core.TagMatches(tags, tag) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasExcludedPrefix(name string, prefixes []string) bool {
-	for _, prefix := range prefixes {
-		if prefix != "" && strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 type loadedInput struct {
@@ -263,11 +252,23 @@ func loadInput(file string, opts core.Options) (loadedInput, error) {
 }
 
 type fileResult struct {
-	lines []string
+	lines    []string
+	exported bool
 }
 
 func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fileResult, error) {
 	opts := in.opts
+	sheets := in.sheets
+	if opts.Tag != "" {
+		valid, err := convert.NewWithContext(opts, context).FilterSheets(sheets)
+		if err != nil {
+			return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
+		}
+		if len(valid) == 0 {
+			return fileResult{}, nil
+		}
+		sheets = valid
+	}
 	target, targetIsDir := resolveTarget(multi, opts)
 	var lines []string
 
@@ -288,7 +289,7 @@ func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fi
 
 		if !opts.MergeSheets && targetIsDir {
 			engine := convert.NewWithContext(opts, context)
-			valid, err := engine.FilterSheets(in.sheets)
+			valid, err := engine.FilterSheets(sheets)
 			if err != nil {
 				return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
 			}
@@ -314,7 +315,7 @@ func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fi
 			break
 		}
 
-		if err := writeJSONWithContext(in.sheets, context, opts, path); err != nil {
+		if err := writeJSONWithContext(sheets, context, opts, path); err != nil {
 			return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
 		}
 		if path != "" {
@@ -327,13 +328,15 @@ func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fi
 			if err := os.MkdirAll(target, 0755); err != nil {
 				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", in.path, target, err)
 			}
-			path = filepath.Join(target, core.FileStem(in.path)+".csv")
+			if opts.MergeSheets {
+				path = filepath.Join(target, core.FileStem(in.path)+".csv")
+			}
 		}
 		csvOpts := opts
 		if target != "" && !targetIsDir {
 			csvOpts.MergeSheets = true
 		}
-		paths, err := export.CSVWithContext(in.sheets, context, csvOpts, path)
+		paths, err := export.CSVWithContext(sheets, context, csvOpts, path)
 		if err != nil {
 			return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
 		}
@@ -343,7 +346,7 @@ func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fi
 		return fileResult{}, fmt.Errorf("unknown format %q (must be json or csv)", opts.Format)
 	}
 
-	return fileResult{lines: lines}, nil
+	return fileResult{lines: lines, exported: true}, nil
 }
 
 func resolveTarget(multi bool, opts core.Options) (string, bool) {
