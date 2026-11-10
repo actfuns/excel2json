@@ -19,7 +19,6 @@ type Options struct {
 	ExcludePrefixes []string // skip sheets/columns with these prefixes
 	Tag             string   // only export sheets/columns tagged with this value
 	StrictTags      bool     // with Tag, error on untagged exported sheets/columns
-	StrictFields    bool     // error on duplicate output field names
 	ParseCellJSON   bool     // parse JSON strings inside cells
 	StringifyAll    bool     // convert all values to strings
 

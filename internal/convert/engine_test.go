@@ -147,7 +147,7 @@ func TestDateDefaultFormat(t *testing.T) {
 func TestTagFiltersColumns(t *testing.T) {
 	sheet := core.Sheet{
 		Name:       "Shop",
-		Headers:    []string{"id", "reward", "reward", "common", "name", "#note"},
+		Headers:    []string{"id", "reward_c", "reward_s", "common", "name", "#note"},
 		ColumnTags: [][]string{nil, {"c"}, {"s"}, nil, {"c"}, {"c"}},
 		Types:      []string{"int", "int", "int", "int", "string", "int"},
 		Rows:       [][]string{{"1", "10", "20", "30", "x", "99"}},
@@ -158,7 +158,7 @@ func TestTagFiltersColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := client.([]any)[0].(map[string]any)
-	if row["reward"] != int64(10) || row["common"] != int64(30) || row["name"] != "x" {
+	if row["reward_c"] != int64(10) || row["common"] != int64(30) || row["name"] != "x" {
 		t.Errorf("client row = %v", row)
 	}
 	if _, ok := row["#note"]; ok {
@@ -170,16 +170,13 @@ func TestTagFiltersColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	row = server.([]any)[0].(map[string]any)
-	if row["reward"] != int64(20) || row["common"] != int64(30) {
+	if row["reward_s"] != int64(20) || row["common"] != int64(30) {
 		t.Errorf("server row = %v", row)
 	}
 	if _, ok := row["name"]; ok {
 		t.Errorf("client-only column leaked to server: %v", row)
 	}
 
-	if _, err := New(core.Options{ListOutput: true}).ConvertSheet(sheet); err == nil {
-		t.Error("duplicate reward key without --tag: expected error")
-	}
 	if _, err := New(core.Options{Tag: "c", StrictTags: true, ListOutput: true, ExcludePrefixes: []string{"#"}}).ConvertSheet(sheet); err == nil {
 		t.Error("strict tags with untagged id/common: expected error")
 	}
@@ -254,17 +251,44 @@ func TestCSVColumnsDuplicateTagged(t *testing.T) {
 	}
 }
 
-func TestStrictFields(t *testing.T) {
+func TestDuplicateFields(t *testing.T) {
 	sheet := core.Sheet{
 		Name:    "S",
 		Headers: []string{"id", "id"},
 		Types:   []string{"int", "int"},
 		Rows:    [][]string{{"1", "2"}},
 	}
-	if _, err := New(core.Options{ListOutput: true}).ConvertSheet(sheet); err != nil {
-		t.Fatalf("default duplicate fields should allow last-wins: %v", err)
+	if _, err := New(core.Options{ListOutput: true}).ConvertSheet(sheet); err == nil {
+		t.Error("duplicate headers: expected error")
 	}
-	if _, err := New(core.Options{ListOutput: true, StrictFields: true}).ConvertSheet(sheet); err == nil {
-		t.Error("strict-fields with duplicate headers: expected error")
+}
+
+func TestExcludedDuplicateFieldsIgnored(t *testing.T) {
+	sheet := core.Sheet{
+		Name:    "S",
+		Headers: []string{"#id", "#id", "id"},
+		Types:   []string{"int", "int", "int"},
+		Rows:    [][]string{{"1", "2", "3"}},
+	}
+	v, err := New(core.Options{ListOutput: true, ExcludePrefixes: []string{"#"}}).ConvertSheet(sheet)
+	if err != nil {
+		t.Fatalf("excluded duplicate columns should not fail: %v", err)
+	}
+	row := v.([]any)[0].(map[string]any)
+	if row["id"] != int64(3) {
+		t.Errorf("row = %v, want only id", row)
+	}
+}
+
+func TestTagDuplicateColumnsRejected(t *testing.T) {
+	sheet := core.Sheet{
+		Name:       "S",
+		Headers:    []string{"reward", "reward"},
+		ColumnTags: [][]string{{"c"}, {"s"}},
+		Types:      []string{"int", "int"},
+		Rows:       [][]string{{"10", "20"}},
+	}
+	if _, err := New(core.Options{Tag: "c", ListOutput: true}).ConvertSheet(sheet); err == nil {
+		t.Error("duplicate base column names should fail even when a tag selects one")
 	}
 }

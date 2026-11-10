@@ -420,3 +420,79 @@ func TestLoadTags(t *testing.T) {
 		t.Errorf("required markers = %v/%v, want true/false", got.Required[4], got.Required[5])
 	}
 }
+
+func TestLoadExcludesColumnsAndSheets(t *testing.T) {
+	f := excelize.NewFile()
+	if _, err := f.NewSheet("#Notes"); err != nil {
+		t.Fatal(err)
+	}
+	rows := [][]any{
+		{"id", "#note", "skip_x", "name"},
+		{"int", "string", "int", "string"},
+		{"1", "comment", "2", "x"},
+	}
+	for i, r := range rows {
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetSheetRow("Sheet1", cell, &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.SetSheetRow("#Notes", "A1", &[]any{"id"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetSheetRow("#Notes", "A2", &[]any{"int"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetSheetRow("#Notes", "A3", &[]any{"1"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "excluded.xlsx")
+	if err := f.SaveAs(path); err != nil {
+		t.Fatal(err)
+	}
+
+	sheets, err := Load(path, core.Options{
+		HeaderRow:       0,
+		TypeRow:         1,
+		DataRow:         2,
+		ExcludePrefixes: []string{"#", "skip_"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sheets) != 1 || sheets[0].Name != "Sheet1" {
+		t.Fatalf("sheets = %+v, want only Sheet1", sheets)
+	}
+	sheet := sheets[0]
+	if want := []string{"id", "name"}; !reflect.DeepEqual(sheet.Headers, want) {
+		t.Errorf("Headers = %v, want %v", sheet.Headers, want)
+	}
+	if want := []string{"int", "string"}; !reflect.DeepEqual(sheet.Types, want) {
+		t.Errorf("Types = %v, want %v", sheet.Types, want)
+	}
+	if want := []string{"1", "x"}; !reflect.DeepEqual(sheet.Rows[0], want) {
+		t.Errorf("Rows[0] = %v, want %v", sheet.Rows[0], want)
+	}
+}
+
+func TestLoadRejectsDuplicateTaggedColumns(t *testing.T) {
+	f := excelize.NewFile()
+	rows := [][]any{
+		{"reward@c", "reward@s"},
+		{"int", "int"},
+		{"1", "2"},
+	}
+	for i, r := range rows {
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetSheetRow("Sheet1", cell, &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "duplicate-tags.xlsx")
+	if err := f.SaveAs(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path, core.Options{HeaderRow: 0, TypeRow: 1, DataRow: 2}); err == nil {
+		t.Error("duplicate base column names after tag stripping: expected error")
+	}
+}

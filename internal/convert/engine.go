@@ -50,7 +50,13 @@ func NewWithSheets(opts core.Options, sheets []core.Sheet) *Engine {
 func (e *Engine) FilterSheets(sheets []core.Sheet) ([]core.Sheet, error) {
 	var out []core.Sheet
 	for _, s := range sheets {
-		if e.skipSheet(s) {
+		if e.sheetExcludedByPrefix(s) {
+			continue
+		}
+		if err := e.validateSheetColumns(s); err != nil {
+			return nil, err
+		}
+		if !core.TagMatches(s.Tags, e.opts.Tag) {
 			continue
 		}
 		if len(s.Headers) == 0 || len(s.Rows) == 0 {
@@ -69,6 +75,9 @@ func (e *Engine) FilterSheets(sheets []core.Sheet) ([]core.Sheet, error) {
 
 // ConvertSheet returns the sheet as a dict (keyed by first column) or an array, depending on ListOutput.
 func (e *Engine) ConvertSheet(sheet core.Sheet) (any, error) {
+	if err := e.validateSheetColumns(sheet); err != nil {
+		return nil, err
+	}
 	if err := e.validateSheetTags(sheet); err != nil {
 		return nil, err
 	}
@@ -118,7 +127,7 @@ func (e *Engine) ConvertRow(sheet core.Sheet, rowIdx int, row []string) (map[str
 		}
 
 		name := e.fieldName(header, ci)
-		if _, exists := out[name]; exists && e.errorOnDuplicateFields(sheet) {
+		if _, exists := out[name]; exists {
 			return nil, fmt.Errorf("duplicate output field %q (sheet %q, data row %d)",
 				name, sheet.Name, rowIdx+1)
 		}
@@ -129,6 +138,9 @@ func (e *Engine) ConvertRow(sheet core.Sheet, rowIdx int, row []string) (map[str
 
 // CSVColumns returns column metadata for the CSV writer.
 func (e *Engine) CSVColumns(sheet core.Sheet) ([]CSVColumn, error) {
+	if err := e.validateSheetColumns(sheet); err != nil {
+		return nil, err
+	}
 	if err := e.validateSheetTags(sheet); err != nil {
 		return nil, err
 	}
@@ -143,7 +155,7 @@ func (e *Engine) CSVColumns(sheet core.Sheet) ([]CSVColumn, error) {
 			continue
 		}
 		name := e.fieldName(header, ci)
-		if seen[name] && e.errorOnDuplicateFields(sheet) {
+		if seen[name] {
 			return nil, fmt.Errorf("duplicate output field %q (sheet %q)", name, sheet.Name)
 		}
 		seen[name] = true
@@ -162,8 +174,8 @@ type CSVColumn struct {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-// skipSheet applies the hard exclusion prefixes and the optional tag filter.
-func (e *Engine) skipSheet(sheet core.Sheet) bool {
+// sheetExcludedByPrefix reports whether a sheet is hard-excluded by -x.
+func (e *Engine) sheetExcludedByPrefix(sheet core.Sheet) bool {
 	names := []string{sheet.Name}
 	if sheet.RawName != "" && sheet.RawName != sheet.Name {
 		names = append(names, sheet.RawName)
@@ -173,7 +185,7 @@ func (e *Engine) skipSheet(sheet core.Sheet) bool {
 			return true
 		}
 	}
-	return !core.TagMatches(sheet.Tags, e.opts.Tag)
+	return false
 }
 
 // skipColumn returns true when a column name starts with any exclude prefix.
@@ -223,6 +235,22 @@ func (e *Engine) fieldName(header string, ci int) string {
 	return name
 }
 
+func (e *Engine) validateSheetColumns(sheet core.Sheet) error {
+	seen := make(map[string]string, len(sheet.Headers))
+	for ci, header := range sheet.Headers {
+		if e.skipColumn(header) {
+			continue
+		}
+		name := e.fieldName(header, ci)
+		key := strings.ToLower(name)
+		if prev, ok := seen[key]; ok {
+			return fmt.Errorf("duplicate column %q (also %q) in sheet %q", name, prev, sheet.Name)
+		}
+		seen[key] = name
+	}
+	return nil
+}
+
 func (e *Engine) validateSheetTags(sheet core.Sheet) error {
 	if e.opts.StrictTags && e.opts.Tag != "" && len(sheet.Tags) == 0 {
 		return fmt.Errorf("sheet %q has no tags (required by --strict-tags)", sheet.Name)
@@ -240,10 +268,6 @@ func (e *Engine) hasSelectedColumn(sheet core.Sheet) bool {
 		}
 	}
 	return false
-}
-
-func (e *Engine) errorOnDuplicateFields(sheet core.Sheet) bool {
-	return e.opts.StrictFields || e.opts.Tag != "" || sheetHasTags(sheet)
 }
 
 func sheetHasTags(sheet core.Sheet) bool {

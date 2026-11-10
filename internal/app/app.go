@@ -79,7 +79,6 @@ func NewCommand(version string) *cobra.Command {
 	root.Flags().StringArrayVarP(&opts.ExcludePrefixes, "exclude", "x", nil, "skip sheets & columns with prefix (repeatable)")
 	root.Flags().StringVar(&opts.Tag, "tag", "", "only export sheets/columns with this tag; untagged = common")
 	root.Flags().BoolVar(&opts.StrictTags, "strict-tags", false, "with --tag, error on untagged sheets/columns")
-	root.Flags().BoolVar(&opts.StrictFields, "strict-fields", false, "error on duplicate output field names")
 	root.Flags().BoolVar(&opts.ParseCellJSON, "parse-cell-json", false, "parse JSON strings inside cells")
 	root.Flags().BoolVar(&opts.StringifyAll, "stringify-all", false, "convert all values to strings")
 	root.Flags().BoolVar(&opts.RequireByDefault, "required-by-default", false, "treat fields without !/? as required")

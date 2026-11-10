@@ -139,6 +139,9 @@ func Load(filePath string, opts core.Options) ([]core.Sheet, error) {
 		}
 		sheetName, sheetTags, _ := core.SplitTagSuffix(rs.Name)
 		sheetName = strings.TrimSpace(sheetName)
+		if excludedByPrefix(sheetName, opts.ExcludePrefixes) || excludedByPrefix(rs.Name, opts.ExcludePrefixes) {
+			continue
+		}
 
 		// determine max column count across all rows
 		maxCols := 0
@@ -223,6 +226,26 @@ func Load(filePath string, opts core.Options) ([]core.Sheet, error) {
 			continue
 		}
 
+		keep, filtered := filterExcludedColumns(headers, opts.ExcludePrefixes)
+		if filtered {
+			headers = filterStrings(headers, keep)
+			types = filterStrings(types, keep)
+			required = filterRequired(required, keep)
+			columnTags = filterTags(columnTags, keep)
+			for ri, row := range dataRows {
+				kept := make([]string, len(keep))
+				for ni, ci := range keep {
+					if ci < len(row) {
+						kept[ni] = row[ci]
+					}
+				}
+				dataRows[ri] = kept
+			}
+		}
+		if err := validateUniqueHeaders(sheetName, headers); err != nil {
+			return nil, err
+		}
+
 		sheets = append(sheets, core.Sheet{
 			Name:       sheetName,
 			RawName:    rs.Name,
@@ -240,4 +263,65 @@ func Load(filePath string, opts core.Options) ([]core.Sheet, error) {
 	}
 
 	return sheets, nil
+}
+
+func excludedByPrefix(name string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if p != "" && strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func filterExcludedColumns(headers, prefixes []string) ([]int, bool) {
+	keep := make([]int, 0, len(headers))
+	for ci, header := range headers {
+		if !excludedByPrefix(header, prefixes) {
+			keep = append(keep, ci)
+		}
+	}
+	return keep, len(keep) != len(headers)
+}
+
+func filterStrings(values []string, keep []int) []string {
+	out := make([]string, len(keep))
+	for i, ci := range keep {
+		if ci < len(values) {
+			out[i] = values[ci]
+		}
+	}
+	return out
+}
+
+func filterRequired(values []*bool, keep []int) []*bool {
+	out := make([]*bool, len(keep))
+	for i, ci := range keep {
+		if ci < len(values) {
+			out[i] = values[ci]
+		}
+	}
+	return out
+}
+
+func filterTags(values [][]string, keep []int) [][]string {
+	out := make([][]string, len(keep))
+	for i, ci := range keep {
+		if ci < len(values) {
+			out[i] = values[ci]
+		}
+	}
+	return out
+}
+
+func validateUniqueHeaders(sheetName string, headers []string) error {
+	seen := make(map[string]string, len(headers))
+	for _, header := range headers {
+		key := strings.ToLower(header)
+		if prev, ok := seen[key]; ok && prev != "" {
+			return fmt.Errorf("sheet [%s]: duplicate column %q (also %q)", sheetName, header, prev)
+		}
+		seen[key] = header
+	}
+	return nil
 }

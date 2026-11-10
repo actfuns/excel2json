@@ -83,10 +83,9 @@ excel2json data.xlsx -t 1 --required-by-default
 | `-d` | `--date-format` | `yyyy/MM/dd` | Date format string |
 | | | **Field processing** |
 | `-l` | `--lowercase` | `false` | Convert field names to lowercase |
-| `-x` | `--exclude` | `nil` | Skip sheets & columns with prefix (repeatable) |
+| `-x` | `--exclude` | `nil` | Drop comment sheets/columns by prefix at load time (repeatable) |
 | | `--tag` | `""` | Only export sheets/columns with this tag; untagged = common |
 | | `--strict-tags` | `false` | With `--tag`, error on untagged sheets/columns |
-| | `--strict-fields` | `false` | Error on duplicate output field names (default: last wins) |
 | | `--parse-cell-json` | `false` | Parse JSON strings inside untyped cells |
 | | `--stringify-all` | `false` | Stringify untyped values |
 | | `--types` | `""` | types.yaml / types.yml path (auto-discovered next to the input or in cwd) |
@@ -120,17 +119,17 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 ```
 
 - `@c,s` is metadata only: JSON keys stay `reward`; sheet filenames drop the suffix (`Shop@c` → `Shop.json`)
-- `-x/--exclude` is applied first and is a hard exclusion for every target (e.g. `-x '#'` for comments)
+- `-x/--exclude` drops matching sheets/columns at load time; they are not valid for output, guards or `ref(...)` (e.g. `-x '#'` for comments)
 - Untagged sheets and columns are common and exported for every `--tag`
 - `--strict-tags` makes an untagged exported sheet/column an error
 - Dict mode keys by the first exported column
-- Two selected columns with the same output key are an error
-- `ref(...)` always validates against the full workbook, independent of `--tag`/`-x`; export filtering does not reduce ref context
+- Column base names must be unique within a sheet, case-insensitively and independent of tags (`reward@c` + `reward@s` is invalid); `-x` excluded columns do not count
+- `ref(...)` validates against all loaded sheets/columns, independent of `--tag`; `-x` excluded sheets/columns are not loaded and cannot be referenced
 - Workbooks/sheets with no matching columns are skipped; if nothing matches at all, `--tag` reports a clear error
 - Tags may contain letters, digits, `_` and `-`; a trailing `@...` suffix is reserved for tags
-- `--strict-fields` makes ordinary duplicate field names an error as well
 - Tags and required markers can be combined: `reward@c!`, `reward!@s`
-- Without `--tag`, all sheets/columns are exported; duplicate keys caused by tag-stripped names still error
+- If client/server need different values, use distinct column names or a single column tagged `@c,s`
+- Without `--tag`, all sheets/columns are exported; duplicate output field names still error
 
 ---
 

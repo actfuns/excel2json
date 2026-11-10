@@ -802,3 +802,63 @@ func TestRunTagRefUsesTaggedColumn(t *testing.T) {
 	}
 	assertFile(t, filepath.Join(out, "Shop.json"), `[{"sid":1}]`)
 }
+
+func TestRefCannotUseExcludedColumn(t *testing.T) {
+	workbook := makeSheetWorkbook(t, "Shop",
+		[]string{"id", "skip_value", "ref_value"},
+		[]string{"int", "int", "int:ref(Shop.skip_value)"},
+		[]string{"1", "2", "2"},
+	)
+	opts := core.Options{
+		HeaderRow:       0,
+		TypeRow:         1,
+		DataRow:         2,
+		ListOutput:      true,
+		Format:          "json",
+		OutputPath:      filepath.Join(t.TempDir(), "out") + "/",
+		NameTmpl:        "{sheet}",
+		ExcludePrefixes: []string{"skip_"},
+	}
+	err := Run([]string{workbook}, opts)
+	if err == nil || !strings.Contains(err.Error(), "skip_value") {
+		t.Fatalf("Run = %v, want missing/excluded column ref error", err)
+	}
+}
+
+func TestRefCannotUseExcludedSheet(t *testing.T) {
+	f := excelize.NewFile()
+	for _, s := range []struct {
+		name string
+		rows [][]any
+	}{
+		{"#Lookup", [][]any{{"id"}, {"int"}, {"1"}}},
+		{"Shop", [][]any{{"sid"}, {"int:ref(#Lookup.id)"}, {"1"}}},
+	} {
+		if _, err := f.NewSheet(s.name); err != nil {
+			t.Fatal(err)
+		}
+		for i, r := range s.rows {
+			cell, _ := excelize.CoordinatesToCellName(1, i+1)
+			if err := f.SetSheetRow(s.name, cell, &r); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	workbook := filepath.Join(t.TempDir(), "excluded-ref.xlsx")
+	if err := f.SaveAs(workbook); err != nil {
+		t.Fatal(err)
+	}
+	opts := core.Options{
+		HeaderRow:       0,
+		TypeRow:         1,
+		DataRow:         2,
+		ListOutput:      true,
+		Format:          "json",
+		OutputPath:      filepath.Join(t.TempDir(), "out") + "/",
+		ExcludePrefixes: []string{"#"},
+	}
+	err := Run([]string{workbook}, opts)
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("Run = %v, want excluded sheet ref error", err)
+	}
+}

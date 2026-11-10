@@ -81,10 +81,9 @@ excel2json data.xlsx -t 1 --required-by-default
 | `-d` | `--date-format` | `yyyy/MM/dd` | 日期格式字符串 |
 | | | **字段处理** |
 | `-l` | `--lowercase` | `false` | 字段名转小写 |
-| `-x` | `--exclude` | `nil` | 跳过指定前缀的 sheet 和列（可重复） |
+| `-x` | `--exclude` | `nil` | 加载时丢弃指定前缀的注释 sheet/列（可重复） |
 | | `--tag` | `""` | 只导出带该标签的 sheet/列；无标签视为公共 |
 | | `--strict-tags` | `false` | 配合 `--tag`，导出无标签的 sheet/列时报错 |
-| | `--strict-fields` | `false` | 输出字段名重复时报错（默认后者覆盖前者） |
 | | `--parse-cell-json` | `false` | 解析无类型列单元格中的 JSON 字符串 |
 | | `--stringify-all` | `false` | 无类型列全部输出为字符串 |
 | | `--types` | `""` | types.yaml / types.yml 路径（省略时自动查找） |
@@ -118,17 +117,17 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 ```
 
 - `@c,s` 只作为元数据，JSON key 仍是 `reward`；sheet 文件名去掉后缀（`Shop@c` → `Shop.json`）
-- `-x/--exclude` 先执行，是面向所有端的硬排除（例如用 `-x '#'` 排除注释）
+- `-x/--exclude` 在加载时丢弃匹配的 sheet/列；它们不参与输出、守卫或 `ref(...)`（例如用 `-x '#'` 排除注释）
 - 无标签的 sheet/列视为公共，任何 `--tag` 都会导出
 - `--strict-tags` 下，被导出的 sheet/列若没有标签则报错
 - 字典模式默认使用第一个导出的列作为 key
-- 同一 target 下两个列最终 key 相同会报错
-- `ref(...)` 始终基于完整工作簿校验，不受 `--tag`/`-x` 导出过滤影响
+- 同一 Sheet 内列的基础名必须唯一（忽略大小写），与 tag 无关（`reward@c` + `reward@s` 不合法）；`-x` 排除的列不参与判断
+- `ref(...)` 基于所有已加载的 sheet/列校验，不受 `--tag` 影响；`-x` 排除的 sheet/列不会加载，也不能被引用
 - 没有匹配列的工作簿/Sheet 会跳过；全部无匹配时 `--tag` 会给出明确错误
 - 标签允许字母、数字、`_`、`-`；字段名末尾的 `@...` 保留给标签使用
-- `--strict-fields` 可让普通重复字段名也报错
 - 标签可以和必填标记组合：`reward@c!`、`reward!@s`
-- 不传 `--tag` 时导出全部 sheet/列；但去掉标签后同名 key 冲突仍会报错
+- 如果客户端/服务端需要不同值，请使用不同的列名，或单列标记 `@c,s`
+- 不传 `--tag` 时导出全部 sheet/列；输出字段名重复仍会报错
 
 ---
 
