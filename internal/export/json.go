@@ -13,14 +13,14 @@ import (
 // - Single sheet: output is the raw array/object.
 // - Multiple sheets: output is {"SheetName": <value>, ...}.
 func JSON(sheets []core.Sheet, opts core.Options) (string, error) {
-	return JSONWithContext(sheets, sheets, opts)
+	return JSONWithContext(sheets, convert.SheetsContext(opts, sheets), opts)
 }
 
 // JSONWithContext serialises exportSheets while exposing every sheet in
 // context to ref(...) checks. This lets split exports still validate foreign
 // keys against sheets written to other files.
-func JSONWithContext(exportSheets, context []core.Sheet, opts core.Options) (string, error) {
-	exp := convert.NewWithSheets(opts, context)
+func JSONWithContext(exportSheets []core.Sheet, context []convert.SheetContext, opts core.Options) (string, error) {
+	exp := convert.NewWithContext(opts, context)
 	valid := exp.FilterSheets(exportSheets)
 
 	if len(valid) == 0 {

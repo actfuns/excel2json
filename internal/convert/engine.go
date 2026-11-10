@@ -13,10 +13,10 @@ import (
 // Engine is the core conversion engine shared by JSON and CSV exporters.
 type Engine struct {
 	opts      core.Options
-	typeCache sync.Map     // map[string]cachedType
-	specCache sync.Map     // map[string]cachedSpec
-	refCache  sync.Map     // map[string]refSetResult
-	sheets    []core.Sheet // all sheets in the workbook, used by ref(...)
+	typeCache sync.Map       // map[string]cachedType
+	specCache sync.Map       // map[string]cachedSpec
+	refCache  sync.Map       // map[string]refSetResult
+	sheets    []SheetContext // all sheets available to ref(...)
 	conv      *typing.Converter
 	runner    *schema.Runner
 }
@@ -36,11 +36,9 @@ func New(opts core.Options) *Engine {
 }
 
 // NewWithSheets returns an Engine that can resolve ref(...) checks
-// against every sheet in the workbook.
+// against the given sheets.
 func NewWithSheets(opts core.Options, sheets []core.Sheet) *Engine {
-	e := New(opts)
-	e.sheets = sheets
-	return e
+	return NewWithContext(opts, sheetContexts(opts, sheets))
 }
 
 // ---------------------------------------------------------------------------

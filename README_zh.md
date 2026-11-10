@@ -282,7 +282,7 @@ int:ref(items.id)          # 目标 sheet 的输出名为 items
 $[*][1::3]:string:ref(item.id)
 ```
 
-`ref(...)` 的第一段是**该 sheet 最终输出 JSON 的文件名**（不含 `.json`），由 `--name-tpl` 计算，不使用 Excel sheet 名。例如默认模板 `{file}_{sheet}` 时写 `ref(data_item.id)`；用 `--name-tpl '{sheet}'` 时才写 `ref(item.id)`。被引用列会按自身类型转换后比较。
+`ref(...)` 的第一段是**该 sheet 最终输出 JSON 的文件名**（不含 `.json`），由 `--name-tpl` 计算，不使用 Excel sheet 名。例如默认模板 `{file}_{sheet}` 时写 `ref(data_item.id)`；用 `--name-tpl '{sheet}'` 时才写 `ref(item.id)`。同一次命令传入的所有文件会一起参与 ref 查找，因此不同 xlsx 之间也可以互相引用。被引用列会按自身类型转换后比较。
 
 ### types.yaml 复用
 

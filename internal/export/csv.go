@@ -21,7 +21,12 @@ import (
 //   - Single sheet → one file.
 //   - Multiple sheets → split files named by --name-tpl.
 func CSV(sheets []core.Sheet, opts core.Options, outPath string) ([]string, error) {
-	exp := convert.NewWithSheets(opts, sheets)
+	return CSVWithContext(sheets, convert.SheetsContext(opts, sheets), opts, outPath)
+}
+
+// CSVWithContext writes sheets while resolving ref(...) against context.
+func CSVWithContext(sheets []core.Sheet, context []convert.SheetContext, opts core.Options, outPath string) ([]string, error) {
+	exp := convert.NewWithContext(opts, context)
 	valid := exp.FilterSheets(sheets)
 	if len(valid) == 0 {
 		return nil, fmt.Errorf("no valid sheets to export")

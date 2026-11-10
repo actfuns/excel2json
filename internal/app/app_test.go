@@ -358,3 +358,41 @@ func TestLegacyFlags(t *testing.T) {
 		t.Errorf("legacy output missing int field: %s", data)
 	}
 }
+
+func TestCrossWorkbookRef(t *testing.T) {
+	dir := t.TempDir()
+	makeBook := func(name, sheet string, rows [][]any) string {
+		f := excelize.NewFile()
+		if err := f.SetSheetName("Sheet1", sheet); err != nil {
+			t.Fatal(err)
+		}
+		for i, r := range rows {
+			cell, _ := excelize.CoordinatesToCellName(1, i+1)
+			if err := f.SetSheetRow(sheet, cell, &r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		path := filepath.Join(dir, name)
+		if err := f.SaveAs(path); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	effects := makeBook("effects.xlsx", "effect", [][]any{{"id"}, {"int"}, {"12000340"}})
+	buff := makeBook("buff.xlsx", "buff", [][]any{{"effects"}, {"int:ref(effect.id)"}, {"12000340"}})
+
+	outDir := filepath.Join(dir, "out") + "/"
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		NameTmpl:   "{sheet}",
+		OutputPath: outDir,
+	}
+	if err := Run([]string{buff, effects}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(dir, "out", "buff.json"), `[{"effects":12000340}]`)
+}

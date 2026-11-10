@@ -239,7 +239,7 @@ output [[1,"a",10],[2,"b",20]]
 
 Validators: `gt`, `gte`, `lt`, `lte`, `between`, `eq`, `ne`, `positive`, `negative`, `nonzero`, `multipleof`, `len`, `minlen`, `maxlen`, `email`, `phone`, `phone(e164)`, `url`, `uuid`, `regex`, `prefix`, `suffix`, `contains`, `alpha`, `alnum`, `numeric`, `oneof`/`in`, `notoneof`/`notin`, `unique`, `nonempty`, `ref(package.column)`, `after`, `before`, plus the nestable combinators `and(...)`, `or(...)`, `not(...)`, and the `pad` directive for fixed arrays.
 
-`ref(package.column)` uses the target sheet's final output JSON filename stem (computed from `--name-tpl`) as `package`; `.json` is optional. The Excel sheet name is never used implicitly. With the default template `{file}_{sheet}` write `ref(data_item.id)`; with `--name-tpl '{sheet}'` write `ref(item.id)`.
+`ref(package.column)` uses the target sheet's final output JSON filename stem (computed from `--name-tpl`) as `package`; `.json` is optional. The Excel sheet name is never used implicitly. With the default template `{file}_{sheet}` write `ref(data_item.id)`; with `--name-tpl '{sheet}'` write `ref(item.id)`. Refs are resolved across every file passed in the same invocation, so different workbooks can reference each other.
 
 ```text
 string:or(and(email,len(6,64)), and(phone,len(11,15)))

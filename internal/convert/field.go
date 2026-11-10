@@ -234,24 +234,27 @@ func (e *Engine) refSet(sheetName, column string) (map[string]struct{}, error) {
 // sheetPackageName returns the final output name (filename stem) used by
 // ref(...) for a sheet. When no template is configured, the sheet name is the
 // only available identity.
-func (e *Engine) sheetPackageName(sheetName string) string {
-	if e.opts.NameTmpl == "" {
-		return sheetName
+func (e *Engine) contextOutputName(ctx SheetContext) string {
+	if ctx.OutputName != "" {
+		return ctx.OutputName
 	}
-	return core.ExpandNameTemplate(e.opts.NameTmpl, e.opts.SourceStem, sheetName)
+	if e.opts.NameTmpl == "" {
+		return ctx.Sheet.Name
+	}
+	return core.SanitizeName(core.ExpandNameTemplate(e.opts.NameTmpl, e.opts.SourceStem, ctx.Sheet.Name))
 }
 
-func (e *Engine) findRefSheet(ref string) (*core.Sheet, error) {
+func (e *Engine) findRefSheet(ref string) (*SheetContext, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
-		return nil, fmt.Errorf("ref: empty sheet/package name")
+		return nil, fmt.Errorf("ref: empty output name")
 	}
 	ref = filepath.Base(strings.TrimSuffix(ref, ".json"))
 
-	var matches []*core.Sheet
+	var matches []*SheetContext
 	for i := range e.sheets {
-		pkg := e.sheetPackageName(e.sheets[i].Name)
-		if strings.EqualFold(pkg, ref) || strings.EqualFold(core.SanitizeName(pkg), ref) {
+		name := e.contextOutputName(e.sheets[i])
+		if strings.EqualFold(name, ref) || strings.EqualFold(core.SanitizeName(name), ref) {
 			matches = append(matches, &e.sheets[i])
 		}
 	}
@@ -270,10 +273,11 @@ func (e *Engine) buildRefSet(sheetName, column string) (map[string]struct{}, err
 		return nil, fmt.Errorf("ref(%s.%s) requires workbook context", sheetName, column)
 	}
 
-	sheet, err := e.findRefSheet(sheetName)
+	ctx, err := e.findRefSheet(sheetName)
 	if err != nil {
 		return nil, err
 	}
+	sheet := &ctx.Sheet
 
 	columnIndex := sheet.ColumnIndex(column)
 	if columnIndex < 0 {
@@ -283,6 +287,13 @@ func (e *Engine) buildRefSet(sheetName, column string) (map[string]struct{}, err
 	colType := ""
 	if columnIndex < len(sheet.Types) {
 		colType = sheet.Types[columnIndex]
+	}
+	var spec *schema.Spec
+	if colType != "" {
+		spec, err = schema.Parse(colType, ctx.TypeDefs)
+		if err != nil {
+			return nil, fmt.Errorf("ref: sheet %q column %q type: %w", sheet.Name, column, err)
+		}
 	}
 
 	set := make(map[string]struct{}, len(sheet.Rows))
@@ -294,7 +305,7 @@ func (e *Engine) buildRefSet(sheetName, column string) (map[string]struct{}, err
 		if cell == "" {
 			continue
 		}
-		value, err := e.convertForRef(colType, cell)
+		value, err := e.convertForRef(colType, spec, cell)
 		if err != nil {
 			return nil, fmt.Errorf("ref: sheet %q row %d column %q: %w", sheet.Name, ri+1, column, err)
 		}
@@ -303,15 +314,11 @@ func (e *Engine) buildRefSet(sheetName, column string) (map[string]struct{}, err
 	return set, nil
 }
 
-func (e *Engine) convertForRef(colType, cell string) (any, error) {
+func (e *Engine) convertForRef(colType string, spec *schema.Spec, cell string) (any, error) {
 	if colType == "" {
 		return e.conv.LegacyConvert(cell)
 	}
-	spec, err := e.parseSpec(colType)
-	if err != nil {
-		return nil, err
-	}
-	if len(spec.Rules) == 1 && spec.Rules[0].Selector == nil {
+	if spec != nil && len(spec.Rules) == 1 && spec.Rules[0].Selector == nil {
 		value, err := e.convertAlt(cell, spec.Rules[0].Type, false)
 		if err == nil {
 			return value, nil

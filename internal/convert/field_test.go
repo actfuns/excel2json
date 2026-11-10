@@ -274,7 +274,7 @@ func TestRefUsesOutputPackageName(t *testing.T) {
 			{Name: "item", Headers: []string{"id"}, Types: []string{"string"}, Rows: [][]string{{"i1"}}},
 			{Name: "main", Headers: []string{"item"}, Types: []string{"string:ref(" + ref + ".id)"}, Rows: [][]string{{"i1"}}},
 		})
-		if _, err := e.ConvertRow(e.sheets[1], 0, e.sheets[1].Rows[0]); err != nil {
+		if _, err := e.ConvertRow(e.sheets[1].Sheet, 0, e.sheets[1].Sheet.Rows[0]); err != nil {
 			t.Errorf("ref(%s.id): %v", ref, err)
 		}
 	}
@@ -284,7 +284,7 @@ func TestRefUsesOutputPackageName(t *testing.T) {
 		{Name: "item", Headers: []string{"id"}, Types: []string{"string"}, Rows: [][]string{{"i1"}}},
 		{Name: "main", Headers: []string{"item"}, Types: []string{"string:ref(item.id)"}, Rows: [][]string{{"i1"}}},
 	})
-	if _, err := strict.ConvertRow(strict.sheets[1], 0, strict.sheets[1].Rows[0]); err == nil {
+	if _, err := strict.ConvertRow(strict.sheets[1].Sheet, 0, strict.sheets[1].Sheet.Rows[0]); err == nil {
 		t.Error("raw sheet name should not match a templated output name")
 	}
 
@@ -330,5 +330,20 @@ func TestRefCheck(t *testing.T) {
 	noContext := New(core.Options{})
 	if _, err := noContext.ConvertRow(sheets[1], 0, sheets[1].Rows[0]); err == nil {
 		t.Error("ref without workbook context: expected error")
+	}
+}
+
+func TestCrossWorkbookRef(t *testing.T) {
+	effect := core.Sheet{Name: "effect", Headers: []string{"id"}, Types: []string{"int"}, Rows: [][]string{{"12000340"}}}
+	buff := core.Sheet{Name: "buff", Headers: []string{"effects"}, Types: []string{"int:ref(effect.id)"}, Rows: [][]string{{"12000340"}, {"1"}}}
+	e := NewWithContext(core.Options{}, []SheetContext{
+		{Sheet: effect, OutputName: "effect"},
+		{Sheet: buff, OutputName: "buff"},
+	})
+	if _, err := e.ConvertRow(buff, 0, buff.Rows[0]); err != nil {
+		t.Fatalf("cross-workbook ref: %v", err)
+	}
+	if _, err := e.ConvertRow(buff, 1, buff.Rows[1]); err == nil {
+		t.Error("missing cross-workbook ref: expected error")
 	}
 }

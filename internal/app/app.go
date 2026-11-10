@@ -129,19 +129,60 @@ func Run(files []string, opts core.Options) error {
 		return fmt.Errorf("--key cannot be used with --list")
 	}
 
-	multi := len(files) > 1
-	g, ctx := errgroup.WithContext(context.Background())
-	g.SetLimit(2 * runtime.NumCPU())
-
-	results := make([]fileResult, len(files))
-	for i, f := range files {
-		g.Go(func() error {
+	// Pass 1: load every workbook so ref(...) can resolve across files.
+	inputs := make([]loadedInput, len(files))
+	loadGroup, loadCtx := errgroup.WithContext(context.Background())
+	loadGroup.SetLimit(2 * runtime.NumCPU())
+	for i, file := range files {
+		loadGroup.Go(func() error {
 			select {
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-loadCtx.Done():
+				return loadCtx.Err()
 			default:
 			}
-			r, err := exportFile(f, opts, multi)
+			in, err := loadInput(file, opts)
+			if err != nil {
+				return err
+			}
+			inputs[i] = in
+			return nil
+		})
+	}
+	if err := loadGroup.Wait(); err != nil {
+		return err
+	}
+
+	contextSheets := make([]convert.SheetContext, 0)
+	outputNames := make(map[string]string)
+	for _, in := range inputs {
+		for _, sheet := range in.sheets {
+			name := core.SanitizeName(core.ExpandNameTemplate(in.opts.NameTmpl, in.opts.SourceStem, sheet.Name))
+			if prev, exists := outputNames[name]; exists {
+				return fmt.Errorf("output name collision %q between %s and %s:%s (check --name-tpl)",
+					name, prev, in.path, sheet.Name)
+			}
+			outputNames[name] = in.path + ":" + sheet.Name
+			contextSheets = append(contextSheets, convert.SheetContext{
+				Sheet:      sheet,
+				OutputName: name,
+				TypeDefs:   in.opts.TypeDefs,
+			})
+		}
+	}
+
+	// Pass 2: export each workbook with the shared ref context.
+	multi := len(files) > 1
+	results := make([]fileResult, len(files))
+	exportGroup, exportCtx := errgroup.WithContext(context.Background())
+	exportGroup.SetLimit(2 * runtime.NumCPU())
+	for i := range inputs {
+		exportGroup.Go(func() error {
+			select {
+			case <-exportCtx.Done():
+				return exportCtx.Err()
+			default:
+			}
+			r, err := exportInput(inputs[i], contextSheets, multi)
 			if err != nil {
 				return err
 			}
@@ -149,7 +190,7 @@ func Run(files []string, opts core.Options) error {
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
+	if err := exportGroup.Wait(); err != nil {
 		return err
 	}
 
@@ -161,23 +202,32 @@ func Run(files []string, opts core.Options) error {
 	return nil
 }
 
+type loadedInput struct {
+	path   string
+	opts   core.Options
+	sheets []core.Sheet
+}
+
+func loadInput(file string, opts core.Options) (loadedInput, error) {
+	defs, err := schema.LoadTypeDefs(file, opts.TypesPath)
+	if err != nil {
+		return loadedInput{}, fmt.Errorf("%s: %w", file, err)
+	}
+	opts.TypeDefs = defs
+	opts.SourceStem = core.FileStem(file)
+	sheets, err := excel.Load(file, opts)
+	if err != nil {
+		return loadedInput{}, fmt.Errorf("%s: %w", file, err)
+	}
+	return loadedInput{path: file, opts: opts, sheets: sheets}, nil
+}
+
 type fileResult struct {
 	lines []string
 }
 
-func exportFile(f string, opts core.Options, multi bool) (fileResult, error) {
-	defs, err := schema.LoadTypeDefs(f, opts.TypesPath)
-	if err != nil {
-		return fileResult{}, fmt.Errorf("%s: %w", f, err)
-	}
-	opts.TypeDefs = defs
-	opts.SourceStem = core.FileStem(f)
-
-	sheets, err := excel.Load(f, opts)
-	if err != nil {
-		return fileResult{}, fmt.Errorf("%s: %w", f, err)
-	}
-
+func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fileResult, error) {
+	opts := in.opts
 	target, targetIsDir := resolveTarget(multi, opts)
 	var lines []string
 
@@ -191,39 +241,38 @@ func exportFile(f string, opts core.Options, multi bool) (fileResult, error) {
 		path := target
 		if targetIsDir {
 			if err := os.MkdirAll(target, 0755); err != nil {
-				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", f, target, err)
+				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", in.path, target, err)
 			}
-			path = filepath.Join(target, core.FileStem(f)+".json")
+			path = filepath.Join(target, core.FileStem(in.path)+".json")
 		}
 
 		if !opts.MergeSheets && targetIsDir {
-			engine := convert.NewWithSheets(opts, sheets)
-			valid := engine.FilterSheets(sheets)
+			engine := convert.NewWithContext(opts, context)
+			valid := engine.FilterSheets(in.sheets)
 			if len(valid) == 0 {
-				return fileResult{}, fmt.Errorf("%s: no valid sheets to export", f)
+				return fileResult{}, fmt.Errorf("%s: no valid sheets to export", in.path)
 			}
-			dir := target
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", f, dir, err)
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", in.path, target, err)
 			}
 			seen := make(map[string]bool, len(valid))
-			for _, s := range valid {
-				name := core.ExpandNameTemplate(opts.NameTmpl, core.FileStem(f), s.Name) + ".json"
-				spath := filepath.Join(dir, core.SanitizeName(name))
+			for _, sheet := range valid {
+				name := core.ExpandNameTemplate(opts.NameTmpl, core.FileStem(in.path), sheet.Name) + ".json"
+				spath := filepath.Join(target, core.SanitizeName(name))
 				if seen[spath] {
-					return fileResult{}, fmt.Errorf("%s: output name collision %q (check --name-tpl)", f, spath)
+					return fileResult{}, fmt.Errorf("%s: output name collision %q (check --name-tpl)", in.path, spath)
 				}
 				seen[spath] = true
-				if err := writeOneJSONWithEngine(engine, s, opts, spath); err != nil {
-					return fileResult{}, fmt.Errorf("%s: %w", f, err)
+				if err := writeOneJSONWithEngine(engine, sheet, opts, spath); err != nil {
+					return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
 				}
 				lines = append(lines, spath)
 			}
 			break
 		}
 
-		if err := writeJSON(sheets, opts, path); err != nil {
-			return fileResult{}, fmt.Errorf("%s: %w", f, err)
+		if err := writeJSONWithContext(in.sheets, context, opts, path); err != nil {
+			return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
 		}
 		if path != "" {
 			lines = append(lines, path)
@@ -233,17 +282,17 @@ func exportFile(f string, opts core.Options, multi bool) (fileResult, error) {
 		path := target
 		if targetIsDir {
 			if err := os.MkdirAll(target, 0755); err != nil {
-				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", f, target, err)
+				return fileResult{}, fmt.Errorf("%s: mkdir %s: %w", in.path, target, err)
 			}
-			path = filepath.Join(target, core.FileStem(f)+".csv")
+			path = filepath.Join(target, core.FileStem(in.path)+".csv")
 		}
 		csvOpts := opts
 		if target != "" && !targetIsDir {
 			csvOpts.MergeSheets = true
 		}
-		paths, err := export.CSV(sheets, csvOpts, path)
+		paths, err := export.CSVWithContext(in.sheets, context, csvOpts, path)
 		if err != nil {
-			return fileResult{}, fmt.Errorf("%s: %w", f, err)
+			return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
 		}
 		lines = append(lines, paths...)
 
@@ -265,7 +314,11 @@ func resolveTarget(multi bool, opts core.Options) (string, bool) {
 }
 
 func writeJSON(sheets []core.Sheet, opts core.Options, target string) error {
-	content, err := export.JSON(sheets, opts)
+	return writeJSONWithContext(sheets, convert.SheetsContext(opts, sheets), opts, target)
+}
+
+func writeJSONWithContext(sheets []core.Sheet, context []convert.SheetContext, opts core.Options, target string) error {
+	content, err := export.JSONWithContext(sheets, context, opts)
 	if err != nil {
 		return err
 	}
