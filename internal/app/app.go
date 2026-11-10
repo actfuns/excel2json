@@ -189,11 +189,13 @@ func Run(files []string, opts core.Options) error {
 
 	outputNames := make(map[string]string)
 	selectedSheets := 0
-	for _, in := range inputs {
+	for i := range inputs {
+		in := &inputs[i]
 		selected, err := convert.New(in.opts).FilterSheets(in.sheets)
 		if err != nil {
 			return fmt.Errorf("%s: %w", in.path, err)
 		}
+		in.selected = selected
 		selectedSheets += len(selected)
 		for _, sheet := range in.sheets {
 			name := core.SanitizeName(core.ExpandNameTemplate(in.opts.NameTmpl, in.opts.SourceStem, sheet.Name))
@@ -252,9 +254,10 @@ func verbosef(format string, args ...any) {
 }
 
 type loadedInput struct {
-	path   string
-	opts   core.Options
-	sheets []core.Sheet
+	path     string
+	opts     core.Options
+	sheets   []core.Sheet
+	selected []core.Sheet
 }
 
 func loadInput(file string, opts core.Options) (loadedInput, error) {
@@ -278,19 +281,12 @@ type fileResult struct {
 
 func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fileResult, error) {
 	opts := in.opts
-	sheets := in.sheets
-	if opts.Tag != "" {
-		valid, err := convert.NewWithContext(opts, context).FilterSheets(sheets)
-		if err != nil {
-			return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
+	sheets := in.selected
+	if opts.Tag != "" && len(sheets) == 0 {
+		if opts.Verbose {
+			verbosef("skip file %s: no exportable sheets for tag %q\n", in.path, opts.Tag)
 		}
-		if len(valid) == 0 {
-			if opts.Verbose {
-				verbosef("skip file %s: no exportable sheets for tag %q\n", in.path, opts.Tag)
-			}
-			return fileResult{}, nil
-		}
-		sheets = valid
+		return fileResult{}, nil
 	}
 	target, targetIsDir := resolveTarget(multi, opts)
 	var lines []string
@@ -312,10 +308,7 @@ func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fi
 
 		if !opts.MergeSheets && targetIsDir {
 			engine := convert.NewWithContext(opts, context)
-			valid, err := engine.FilterSheets(sheets)
-			if err != nil {
-				return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
-			}
+			valid := sheets
 			if len(valid) == 0 {
 				return fileResult{}, fmt.Errorf("%s: no valid sheets to export", in.path)
 			}
