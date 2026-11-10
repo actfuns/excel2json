@@ -79,3 +79,80 @@ func TestSanitizeNameReserved(t *testing.T) {
 		t.Errorf("SanitizeName(name.) = %q", got)
 	}
 }
+
+func TestSplitTagSuffix(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		tags []string
+		ok   bool
+	}{
+		{"reward", "reward", nil, false},
+		{"reward@c", "reward", []string{"c"}, true},
+		{"reward@s,c", "reward", []string{"s", "c"}, true},
+		{"reward@C", "reward", []string{"c"}, true},
+		{"reward@", "reward@", nil, false},
+		{"reward@c,d.e", "reward@c,d.e", nil, false},
+		{"reward~c", "reward~c", nil, false},
+		{"@c", "@c", nil, false},
+	}
+	for _, c := range cases {
+		got, tags, ok := SplitTagSuffix(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("SplitTagSuffix(%q) = %q,%v,%v, want %q,%v,%v", c.in, got, tags, ok, c.want, c.tags, c.ok)
+			continue
+		}
+		if len(tags) != len(c.tags) {
+			t.Errorf("SplitTagSuffix(%q) tags = %v, want %v", c.in, tags, c.tags)
+			continue
+		}
+		for i := range tags {
+			if tags[i] != c.tags[i] {
+				t.Errorf("SplitTagSuffix(%q) tags = %v, want %v", c.in, tags, c.tags)
+				break
+			}
+		}
+	}
+}
+
+func TestSplitHeader(t *testing.T) {
+	cases := []struct {
+		in       string
+		markers  bool
+		name     string
+		required *bool
+		tags     []string
+	}{
+		{"reward@c", true, "reward", nil, []string{"c"}},
+		{"reward@c!", true, "reward", boolPtr(true), []string{"c"}},
+		{"reward!@c", true, "reward", boolPtr(true), []string{"c"}},
+		{"reward@c?", true, "reward", boolPtr(false), []string{"c"}},
+		{"reward!@c", false, "reward!", nil, []string{"c"}},
+		{"plain", true, "plain", nil, nil},
+		{"reward @c", true, "reward", nil, []string{"c"}},
+	}
+	for _, c := range cases {
+		name, req, tags := SplitHeader(c.in, c.markers)
+		if name != c.name {
+			t.Errorf("SplitHeader(%q) name = %q, want %q", c.in, name, c.name)
+		}
+		if (req == nil) != (c.required == nil) || (req != nil && *req != *c.required) {
+			t.Errorf("SplitHeader(%q) required = %v, want %v", c.in, req, c.required)
+		}
+		if len(tags) != len(c.tags) {
+			t.Errorf("SplitHeader(%q) tags = %v, want %v", c.in, tags, c.tags)
+		}
+	}
+}
+
+func TestTagMatches(t *testing.T) {
+	if !TagMatches(nil, "c") || !TagMatches([]string{"c"}, "") {
+		t.Error("empty tags or target should match")
+	}
+	if !TagMatches([]string{"C", "s"}, "c") {
+		t.Error("tag matching should be case-insensitive")
+	}
+	if TagMatches([]string{"s"}, "c") {
+		t.Error("s should not match c")
+	}
+}

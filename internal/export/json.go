@@ -21,7 +21,10 @@ func JSON(sheets []core.Sheet, opts core.Options) (string, error) {
 // keys against sheets written to other files.
 func JSONWithContext(exportSheets []core.Sheet, context []convert.SheetContext, opts core.Options) (string, error) {
 	exp := convert.NewWithContext(opts, context)
-	valid := exp.FilterSheets(exportSheets)
+	valid, err := exp.FilterSheets(exportSheets)
+	if err != nil {
+		return "", err
+	}
 
 	if len(valid) == 0 {
 		return "", fmt.Errorf("no valid sheets to export")
@@ -41,6 +44,9 @@ func JSONWithContext(exportSheets []core.Sheet, context []convert.SheetContext, 
 		v, err := exp.ConvertSheet(s)
 		if err != nil {
 			return "", fmt.Errorf("sheet [%s]: %w", s.Name, err)
+		}
+		if _, exists := data[s.Name]; exists {
+			return "", fmt.Errorf("duplicate sheet output name %q after tag filtering", s.Name)
 		}
 		data[s.Name] = v
 	}

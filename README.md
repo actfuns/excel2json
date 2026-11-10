@@ -84,6 +84,8 @@ excel2json data.xlsx -t 1 --required-by-default
 | | | **Field processing** |
 | `-l` | `--lowercase` | `false` | Convert field names to lowercase |
 | `-x` | `--exclude` | `nil` | Skip sheets & columns with prefix (repeatable) |
+| | `--tag` | `""` | Only export sheets/columns with this tag; untagged = common |
+| | `--strict-tags` | `false` | With `--tag`, error on untagged sheets/columns |
 | | `--parse-cell-json` | `false` | Parse JSON strings inside untyped cells |
 | | `--stringify-all` | `false` | Stringify untyped values |
 | | `--types` | `""` | types.yaml / types.yml path (auto-discovered next to the input or in cwd) |
@@ -92,10 +94,39 @@ excel2json data.xlsx -t 1 --required-by-default
 | `-m` | `--merge-sheets` | `false` | Merge all sheets into one file (JSON object or CSV sections) |
 | | `--name-tpl` | `{file}_{sheet}` | Split-output filename template with `{file}` `{sheet}` (JSON & CSV) |
 | `-p` | `--pretty` | `false` | Pretty-print JSON with tab indentation |
-| `-k` | `--key` | `""` | Column name for dict keys (default: first column) |
+| `-k` | `--key` | `""` | Column name for dict keys (default: first exported column) |
 | | `--unique-keys` | `false` | Error on duplicate or empty dict keys (default: last wins) |
 
 Row indices (`--header-row`, `--type-row`, `--data-row`) refer to actual 0-based sheet rows. Blank rows are preserved for locating header/type rows and skipped in the data area. `--data-row=-1` uses the row after the header/type rows.
+
+---
+
+### Tags (client/server fields)
+
+Tags select output targets without changing JSON keys:
+
+```text
+reward@c        # client only
+reward@s        # server only
+reward@c,s      # both
+reward          # no tag = common
+Shop@c          # sheet-level tag
+```
+
+```bash
+excel2json --tag c -x '#' data.xlsx -o dist/client/
+excel2json --tag s -x '#' data.xlsx -o dist/server/
+```
+
+- `@c,s` is metadata only: JSON keys stay `reward`; sheet filenames drop the suffix (`Shop@c` → `Shop.json`)
+- `-x/--exclude` is applied first and is a hard exclusion for every target (e.g. `-x '#'` for comments)
+- Untagged sheets and columns are common and exported for every `--tag`
+- `--strict-tags` makes an untagged exported sheet/column an error
+- Dict mode keys by the first exported column
+- Two selected columns with the same output key are an error
+- Tags may contain letters, digits, `_` and `-`; `@` in a sheet/column name is reserved for tags
+- Tags and required markers can be combined: `reward@c!`, `reward!@s`
+- Without `--tag`, all sheets/columns are exported; duplicate keys caused by tag-stripped names still error
 
 ---
 

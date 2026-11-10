@@ -137,6 +137,8 @@ func Load(filePath string, opts core.Options) ([]core.Sheet, error) {
 		if len(rows) == 0 {
 			continue
 		}
+		sheetName, sheetTags, _ := core.SplitTagSuffix(rs.Name)
+		sheetName = strings.TrimSpace(sheetName)
 
 		// determine max column count across all rows
 		maxCols := 0
@@ -158,19 +160,17 @@ func Load(filePath string, opts core.Options) ([]core.Sheet, error) {
 		// --- column names from nameRow ---
 		headers := make([]string, maxCols)
 		required := make([]*bool, maxCols)
+		columnTags := make([][]string, maxCols)
 		for i := range headers {
 			headers[i] = fmt.Sprintf("col_%d", i)
 		}
 		if headerRow >= 0 && headerRow < len(rows) {
 			for ci, val := range rows[headerRow] {
 				if v := strings.TrimSpace(val); v != "" && ci < len(headers) {
-					if hasTypes {
-						name, req := core.SplitFieldMarker(v)
-						headers[ci] = name
-						required[ci] = req
-					} else {
-						headers[ci] = v
-					}
+					name, req, tags := core.SplitHeader(v, hasTypes)
+					headers[ci] = name
+					required[ci] = req
+					columnTags[ci] = tags
 				}
 			}
 		}
@@ -224,11 +224,14 @@ func Load(filePath string, opts core.Options) ([]core.Sheet, error) {
 		}
 
 		sheets = append(sheets, core.Sheet{
-			Name:     rs.Name,
-			Headers:  headers,
-			Types:    types,
-			Required: required,
-			Rows:     dataRows,
+			Name:       sheetName,
+			RawName:    rs.Name,
+			Tags:       sheetTags,
+			Headers:    headers,
+			ColumnTags: columnTags,
+			Types:      types,
+			Required:   required,
+			Rows:       dataRows,
 		})
 	}
 

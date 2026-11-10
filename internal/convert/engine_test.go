@@ -16,7 +16,10 @@ func TestCSVEmptyHeaderMatchesJSON(t *testing.T) {
 	}
 	exp := New(core.Options{ExcludePrefixes: []string{"skip_"}})
 
-	cols := exp.CSVColumns(sheet)
+	cols, err := exp.CSVColumns(sheet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(cols) != 1 || cols[0].Name != "col_1" {
 		t.Fatalf("CSVColumns = %+v, want one column named col_1", cols)
 	}
@@ -38,7 +41,10 @@ func TestFilterSheets(t *testing.T) {
 		{Name: "empty", Headers: []string{"id"}},
 		{Name: "noheaders", Rows: [][]string{{"1"}}},
 	}
-	got := exp.FilterSheets(sheets)
+	got, err := exp.FilterSheets(sheets)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 1 || got[0].Name != "ok" {
 		t.Errorf("FilterSheets = %v, want only ok", got)
 	}
@@ -135,5 +141,115 @@ func TestDateDefaultFormat(t *testing.T) {
 	b, _ := json.Marshal(v)
 	if got, want := string(b), `[{"d":"2024/01/02"}]`; got != want {
 		t.Errorf("date default = %s, want %s", got, want)
+	}
+}
+
+func TestTagFiltersColumns(t *testing.T) {
+	sheet := core.Sheet{
+		Name:       "Shop",
+		Headers:    []string{"id", "reward", "reward", "common", "name", "#note"},
+		ColumnTags: [][]string{nil, {"c"}, {"s"}, nil, {"c"}, {"c"}},
+		Types:      []string{"int", "int", "int", "int", "string", "int"},
+		Rows:       [][]string{{"1", "10", "20", "30", "x", "99"}},
+	}
+
+	client, err := New(core.Options{Tag: "c", ListOutput: true, ExcludePrefixes: []string{"#"}}).ConvertSheet(sheet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := client.([]any)[0].(map[string]any)
+	if row["reward"] != int64(10) || row["common"] != int64(30) || row["name"] != "x" {
+		t.Errorf("client row = %v", row)
+	}
+	if _, ok := row["#note"]; ok {
+		t.Errorf("excluded # column leaked: %v", row)
+	}
+
+	server, err := New(core.Options{Tag: "s", ListOutput: true, ExcludePrefixes: []string{"#"}}).ConvertSheet(sheet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row = server.([]any)[0].(map[string]any)
+	if row["reward"] != int64(20) || row["common"] != int64(30) {
+		t.Errorf("server row = %v", row)
+	}
+	if _, ok := row["name"]; ok {
+		t.Errorf("client-only column leaked to server: %v", row)
+	}
+
+	if _, err := New(core.Options{ListOutput: true}).ConvertSheet(sheet); err == nil {
+		t.Error("duplicate reward key without --tag: expected error")
+	}
+	if _, err := New(core.Options{Tag: "c", StrictTags: true, ListOutput: true, ExcludePrefixes: []string{"#"}}).ConvertSheet(sheet); err == nil {
+		t.Error("strict tags with untagged id/common: expected error")
+	}
+}
+
+func TestTagFiltersSheets(t *testing.T) {
+	sheets := []core.Sheet{
+		{Name: "Shop", RawName: "Shop@c", Tags: []string{"c"}, Headers: []string{"id"}, Rows: [][]string{{"1"}}},
+		{Name: "Shop", RawName: "Shop@s", Tags: []string{"s"}, Headers: []string{"id"}, Rows: [][]string{{"2"}}},
+		{Name: "Common", Headers: []string{"id"}, Rows: [][]string{{"3"}}},
+	}
+	got, err := New(core.Options{Tag: "c"}).FilterSheets(sheets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].RawName != "Shop@c" || got[1].Name != "Common" {
+		t.Errorf("client sheets = %+v", got)
+	}
+
+	if _, err := New(core.Options{Tag: "c", StrictTags: true}).FilterSheets(sheets); err == nil {
+		t.Error("strict tags with untagged Common sheet: expected error")
+	}
+}
+
+func TestTagOnlySheetIsSkipped(t *testing.T) {
+	sheets := []core.Sheet{
+		{
+			Name:       "ServerOnly",
+			Headers:    []string{"reward"},
+			ColumnTags: [][]string{{"s"}},
+			Types:      []string{"int"},
+			Rows:       [][]string{{"10"}},
+		},
+	}
+	got, err := New(core.Options{Tag: "c"}).FilterSheets(sheets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("client FilterSheets = %+v, want none", got)
+	}
+}
+
+func TestTagDictKeyUsesFirstSelectedColumn(t *testing.T) {
+	sheet := core.Sheet{
+		Name:       "S",
+		Headers:    []string{"sid", "name"},
+		ColumnTags: [][]string{{"s"}, {"c"}},
+		Types:      []string{"int", "string"},
+		Rows:       [][]string{{"7", "x"}},
+	}
+	v, err := New(core.Options{Tag: "c"}).ConvertSheet(sheet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := v.(map[string]any)["x"]; !ok {
+		t.Errorf("client dict keys = %v, want x", v)
+	}
+}
+
+func TestCSVColumnsDuplicateTagged(t *testing.T) {
+	sheet := core.Sheet{
+		Name:       "Shop",
+		Tags:       []string{"c"},
+		Headers:    []string{"reward", "reward"},
+		ColumnTags: [][]string{{"c"}, {"c"}},
+		Types:      []string{"int", "int"},
+		Rows:       [][]string{{"1", "2"}},
+	}
+	if _, err := New(core.Options{Tag: "c"}).CSVColumns(sheet); err == nil {
+		t.Error("duplicate tagged columns: expected error")
 	}
 }

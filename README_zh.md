@@ -82,6 +82,8 @@ excel2json data.xlsx -t 1 --required-by-default
 | | | **字段处理** |
 | `-l` | `--lowercase` | `false` | 字段名转小写 |
 | `-x` | `--exclude` | `nil` | 跳过指定前缀的 sheet 和列（可重复） |
+| | `--tag` | `""` | 只导出带该标签的 sheet/列；无标签视为公共 |
+| | `--strict-tags` | `false` | 配合 `--tag`，导出无标签的 sheet/列时报错 |
 | | `--parse-cell-json` | `false` | 解析无类型列单元格中的 JSON 字符串 |
 | | `--stringify-all` | `false` | 无类型列全部输出为字符串 |
 | | `--types` | `""` | types.yaml / types.yml 路径（省略时自动查找） |
@@ -90,10 +92,39 @@ excel2json data.xlsx -t 1 --required-by-default
 | `-m` | `--merge-sheets` | `false` | 合并所有 sheet 到一个文件（JSON 对象或 CSV 分段） |
 | | `--name-tpl` | `{file}_{sheet}` | 拆分输出文件名模板，支持 `{file}` `{sheet}`（JSON 和 CSV） |
 | `-p` | `--pretty` | `false` | JSON 美化输出（Tab 缩进） |
-| `-k` | `--key` | `""` | 用作字典 key 的列名（默认第一列） |
+| `-k` | `--key` | `""` | 用作字典 key 的列名（默认第一个导出的列） |
 | | `--unique-keys` | `false` | 字典 key 重复或为空时报错（默认后者覆盖前者） |
 
 行号参数（`--header-row`、`--type-row`、`--data-row`）按 Excel 实际行号计算（0 开始）。中间空行会保留用于定位表头/类型行，数据区空行会跳过。`--data-row=-1` 表示取表头/类型行之后的第一行。
+
+---
+
+### 标签（客户端/服务端字段）
+
+标签用于区分导出目标，同时保持 JSON key 不变：
+
+```text
+reward@c        # 仅客户端
+reward@s        # 仅服务端
+reward@c,s      # 双端
+reward          # 无标签 = 公共
+Shop@c          # sheet 级标签
+```
+
+```bash
+excel2json --tag c -x '#' data.xlsx -o dist/client/
+excel2json --tag s -x '#' data.xlsx -o dist/server/
+```
+
+- `@c,s` 只作为元数据，JSON key 仍是 `reward`；sheet 文件名去掉后缀（`Shop@c` → `Shop.json`）
+- `-x/--exclude` 先执行，是面向所有端的硬排除（例如用 `-x '#'` 排除注释）
+- 无标签的 sheet/列视为公共，任何 `--tag` 都会导出
+- `--strict-tags` 下，被导出的 sheet/列若没有标签则报错
+- 字典模式默认使用第一个导出的列作为 key
+- 同一 target 下两个列最终 key 相同会报错
+- 标签允许字母、数字、`_`、`-`；sheet/列名中的 `@` 保留给标签使用
+- 标签可以和必填标记组合：`reward@c!`、`reward!@s`
+- 不传 `--tag` 时导出全部 sheet/列；但去掉标签后同名 key 冲突仍会报错
 
 ---
 

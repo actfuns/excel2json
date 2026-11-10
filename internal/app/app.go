@@ -77,6 +77,8 @@ func NewCommand(version string) *cobra.Command {
 	// Field processing.
 	root.Flags().BoolVarP(&opts.Lowercase, "lowercase", "l", false, "convert field names to lowercase")
 	root.Flags().StringArrayVarP(&opts.ExcludePrefixes, "exclude", "x", nil, "skip sheets & columns with prefix (repeatable)")
+	root.Flags().StringVar(&opts.Tag, "tag", "", "only export sheets/columns with this tag; untagged = common")
+	root.Flags().BoolVar(&opts.StrictTags, "strict-tags", false, "with --tag, error on untagged sheets/columns")
 	root.Flags().BoolVar(&opts.ParseCellJSON, "parse-cell-json", false, "parse JSON strings inside cells")
 	root.Flags().BoolVar(&opts.StringifyAll, "stringify-all", false, "convert all values to strings")
 	root.Flags().BoolVar(&opts.RequireByDefault, "required-by-default", false, "treat fields without !/? as required")
@@ -128,6 +130,10 @@ func Run(files []string, opts core.Options) error {
 	if opts.ListOutput && opts.KeyColumn != "" {
 		return fmt.Errorf("--key cannot be used with --list")
 	}
+	opts.Tag = strings.ToLower(strings.TrimSpace(opts.Tag))
+	if opts.StrictTags && opts.Tag == "" {
+		return fmt.Errorf("--strict-tags requires --tag")
+	}
 
 	// Pass 1: load every workbook so ref(...) can resolve across files.
 	inputs := make([]loadedInput, len(files))
@@ -156,6 +162,9 @@ func Run(files []string, opts core.Options) error {
 	outputNames := make(map[string]string)
 	for _, in := range inputs {
 		for _, sheet := range in.sheets {
+			if in.opts.Tag != "" && !sheetMatchesTag(sheet, in.opts.Tag, in.opts.ExcludePrefixes) {
+				continue
+			}
 			name := core.SanitizeName(core.ExpandNameTemplate(in.opts.NameTmpl, in.opts.SourceStem, sheet.Name))
 			if prev, exists := outputNames[name]; exists {
 				return fmt.Errorf("output name collision %q between %s and %s:%s (check --name-tpl)",
@@ -200,6 +209,37 @@ func Run(files []string, opts core.Options) error {
 		}
 	}
 	return nil
+}
+
+func sheetMatchesTag(sheet core.Sheet, tag string, excludePrefixes []string) bool {
+	if !core.TagMatches(sheet.Tags, tag) {
+		return false
+	}
+	if tag == "" {
+		return true
+	}
+	for ci, header := range sheet.Headers {
+		if hasExcludedPrefix(header, excludePrefixes) {
+			continue
+		}
+		var tags []string
+		if ci < len(sheet.ColumnTags) {
+			tags = sheet.ColumnTags[ci]
+		}
+		if core.TagMatches(tags, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasExcludedPrefix(name string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if prefix != "" && strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 type loadedInput struct {
@@ -248,7 +288,10 @@ func exportInput(in loadedInput, context []convert.SheetContext, multi bool) (fi
 
 		if !opts.MergeSheets && targetIsDir {
 			engine := convert.NewWithContext(opts, context)
-			valid := engine.FilterSheets(in.sheets)
+			valid, err := engine.FilterSheets(in.sheets)
+			if err != nil {
+				return fileResult{}, fmt.Errorf("%s: %w", in.path, err)
+			}
 			if len(valid) == 0 {
 				return fileResult{}, fmt.Errorf("%s: no valid sheets to export", in.path)
 			}

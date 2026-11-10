@@ -396,3 +396,154 @@ func TestCrossWorkbookRef(t *testing.T) {
 	}
 	assertFile(t, filepath.Join(dir, "out", "buff.json"), `[{"effects":12000340}]`)
 }
+
+func makeTaggedWorkbook(t *testing.T) string {
+	t.Helper()
+	f := excelize.NewFile()
+	for _, s := range []struct {
+		name   string
+		reward int
+	}{
+		{"Shop@c", 10},
+		{"Server@s", 20},
+	} {
+		if _, err := f.NewSheet(s.name); err != nil {
+			t.Fatal(err)
+		}
+		rows := [][]any{
+			{"id", "reward", "common"},
+			{"int", "int", "int"},
+			{"1", s.reward, "30"},
+		}
+		for i, r := range rows {
+			cell, _ := excelize.CoordinatesToCellName(1, i+1)
+			if err := f.SetSheetRow(s.name, cell, &r); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	path := filepath.Join(t.TempDir(), "tags.xlsx")
+	if err := f.SaveAs(path); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRunTagFiltering(t *testing.T) {
+	workbook := makeTaggedWorkbook(t)
+	base := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		NameTmpl:   "{sheet}",
+	}
+
+	dir := t.TempDir()
+	opts := base
+	opts.Tag = "c"
+	opts.OutputPath = filepath.Join(dir, "client") + "/"
+	if err := Run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(dir, "client", "Shop.json"), `[{"common":30,"id":1,"reward":10}]`)
+
+	opts = base
+	opts.Tag = "s"
+	opts.OutputPath = filepath.Join(dir, "server") + "/"
+	if err := Run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(dir, "server", "Server.json"), `[{"common":30,"id":1,"reward":20}]`)
+
+	opts = base
+	opts.Format = "csv"
+	opts.Tag = "c"
+	opts.OutputPath = filepath.Join(dir, "csv") + "/"
+	if err := Run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(dir, "csv", "tags.csv"), "id,reward,common\n1,10,30\n")
+	if _, err := os.Stat(filepath.Join(dir, "csv", "Server.csv")); !os.IsNotExist(err) {
+		t.Errorf("server sheet should not be exported to client CSV, stat err = %v", err)
+	}
+
+	opts = base
+	opts.Tag = "c"
+	opts.StrictTags = true
+	opts.OutputPath = filepath.Join(dir, "strict") + "/"
+	if err := Run([]string{workbook}, opts); err == nil {
+		t.Error("strict tags with untagged columns: expected error")
+	}
+
+	opts = base
+	opts.StrictTags = true
+	opts.OutputPath = filepath.Join(dir, "strict-no-tag") + "/"
+	if err := Run([]string{workbook}, opts); err == nil {
+		t.Error("--strict-tags without --tag: expected error")
+	}
+}
+
+func TestRunStrictTags(t *testing.T) {
+	f := excelize.NewFile()
+	if err := f.SetSheetName("Sheet1", "Shop@c"); err != nil {
+		t.Fatal(err)
+	}
+	rows := [][]any{
+		{"id@c", "reward@c", "common@c,s"},
+		{"int", "int", "int"},
+		{"1", "10", "30"},
+	}
+	for i, r := range rows {
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetSheetRow("Shop@c", cell, &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workbook := filepath.Join(t.TempDir(), "strict.xlsx")
+	if err := f.SaveAs(workbook); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "out") + "/"
+	opts := core.Options{
+		HeaderRow:  0,
+		TypeRow:    1,
+		DataRow:    2,
+		ListOutput: true,
+		Format:     "json",
+		NameTmpl:   "{sheet}",
+		OutputPath: out,
+		Tag:        "c",
+		StrictTags: true,
+	}
+	if err := Run([]string{workbook}, opts); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.json"), `[{"common":30,"id":1,"reward":10}]`)
+}
+
+func TestSheetMatchesTag(t *testing.T) {
+	sheet := core.Sheet{
+		Name:       "Shop",
+		Headers:    []string{"id", "reward"},
+		ColumnTags: [][]string{nil, {"s"}},
+	}
+	if !sheetMatchesTag(sheet, "c", nil) {
+		t.Error("untagged id should keep sheet common for c")
+	}
+	sheet.ColumnTags[0] = []string{"s"}
+	if sheetMatchesTag(sheet, "c", nil) {
+		t.Error("sheet with only s columns should not match c")
+	}
+	if !sheetMatchesTag(sheet, "s", nil) {
+		t.Error("sheet with s columns should match s")
+	}
+	if !sheetMatchesTag(core.Sheet{Name: "Empty"}, "", nil) {
+		t.Error("empty tag should match")
+	}
+	commentOnly := core.Sheet{Name: "S", Headers: []string{"#note"}}
+	if sheetMatchesTag(commentOnly, "c", []string{"#"}) {
+		t.Error("sheet with only excluded columns should not match")
+	}
+}

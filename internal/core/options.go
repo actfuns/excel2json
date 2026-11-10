@@ -17,6 +17,8 @@ type Options struct {
 	// Field processing.
 	Lowercase       bool     // convert field names to lowercase
 	ExcludePrefixes []string // skip sheets/columns with these prefixes
+	Tag             string   // only export sheets/columns tagged with this value
+	StrictTags      bool     // with Tag, error on untagged exported sheets/columns
 	ParseCellJSON   bool     // parse JSON strings inside cells
 	StringifyAll    bool     // convert all values to strings
 

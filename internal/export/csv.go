@@ -27,7 +27,10 @@ func CSV(sheets []core.Sheet, opts core.Options, outPath string) ([]string, erro
 // CSVWithContext writes sheets while resolving ref(...) against context.
 func CSVWithContext(sheets []core.Sheet, context []convert.SheetContext, opts core.Options, outPath string) ([]string, error) {
 	exp := convert.NewWithContext(opts, context)
-	valid := exp.FilterSheets(sheets)
+	valid, err := exp.FilterSheets(sheets)
+	if err != nil {
+		return nil, err
+	}
 	if len(valid) == 0 {
 		return nil, fmt.Errorf("no valid sheets to export")
 	}
@@ -133,7 +136,10 @@ func writeCSVSeq(w io.Writer, sheets []core.Sheet, exp *convert.Engine) error {
 func writeCSV(w io.Writer, sheet core.Sheet, exp *convert.Engine) error {
 	cw := csv.NewWriter(w)
 
-	cols := exp.CSVColumns(sheet)
+	cols, err := exp.CSVColumns(sheet)
+	if err != nil {
+		return err
+	}
 
 	// header
 	hdr := make([]string, len(cols))

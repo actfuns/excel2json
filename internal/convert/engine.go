@@ -27,6 +27,7 @@ func New(opts core.Options) *Engine {
 	if opts.DateFormat == "" {
 		opts.DateFormat = "yyyy/MM/dd"
 	}
+	opts.Tag = strings.ToLower(strings.TrimSpace(opts.Tag))
 	e := &Engine{
 		opts: opts,
 		conv: &typing.Converter{DateFormat: opts.DateFormat, ParseCellJSON: opts.ParseCellJSON, StringifyAll: opts.StringifyAll},
@@ -45,23 +46,32 @@ func NewWithSheets(opts core.Options, sheets []core.Sheet) *Engine {
 // Public API
 // ---------------------------------------------------------------------------
 
-// FilterSheets returns non-empty sheets not matching --exclude prefixes.
-func (e *Engine) FilterSheets(sheets []core.Sheet) []core.Sheet {
+// FilterSheets returns non-empty sheets selected by --exclude and --tag.
+func (e *Engine) FilterSheets(sheets []core.Sheet) ([]core.Sheet, error) {
 	var out []core.Sheet
 	for _, s := range sheets {
-		if e.skipSheet(s.Name) {
+		if e.skipSheet(s) {
 			continue
 		}
 		if len(s.Headers) == 0 || len(s.Rows) == 0 {
 			continue
 		}
+		if e.opts.Tag != "" && !e.hasSelectedColumn(s) {
+			continue
+		}
+		if err := e.validateSheetTags(s); err != nil {
+			return nil, err
+		}
 		out = append(out, s)
 	}
-	return out
+	return out, nil
 }
 
 // ConvertSheet returns the sheet as a dict (keyed by first column) or an array, depending on ListOutput.
 func (e *Engine) ConvertSheet(sheet core.Sheet) (any, error) {
+	if err := e.validateSheetTags(sheet); err != nil {
+		return nil, err
+	}
 	if e.opts.ListOutput {
 		return e.toArray(sheet)
 	}
@@ -73,7 +83,11 @@ func (e *Engine) ConvertRow(sheet core.Sheet, rowIdx int, row []string) (map[str
 	out := make(map[string]any)
 
 	for ci, header := range sheet.Headers {
-		if e.skipColumn(header) {
+		selected, err := e.columnSelected(sheet, ci)
+		if err != nil {
+			return nil, err
+		}
+		if !selected {
 			continue
 		}
 
@@ -103,36 +117,39 @@ func (e *Engine) ConvertRow(sheet core.Sheet, rowIdx int, row []string) (map[str
 				sheet.Name, rowIdx+1, header, err)
 		}
 
-		name := header
-		if e.opts.Lowercase {
-			name = strings.ToLower(name)
+		name := e.fieldName(header, ci)
+		if _, exists := out[name]; exists && e.checkDuplicateKeys(sheet) {
+			return nil, fmt.Errorf("duplicate output field %q after tag filtering (sheet %q, data row %d)",
+				name, sheet.Name, rowIdx+1)
 		}
-		if name == "" {
-			name = fmt.Sprintf("col_%d", ci)
-		}
-
 		out[name] = val
 	}
 	return out, nil
 }
 
-// CSVColumns returns column metadata for the CSV writer (filtered by exclude_prefix, with optional lowercase).
-func (e *Engine) CSVColumns(sheet core.Sheet) []CSVColumn {
+// CSVColumns returns column metadata for the CSV writer.
+func (e *Engine) CSVColumns(sheet core.Sheet) ([]CSVColumn, error) {
+	if err := e.validateSheetTags(sheet); err != nil {
+		return nil, err
+	}
 	var cols []CSVColumn
+	seen := make(map[string]bool, len(sheet.Headers))
 	for ci, header := range sheet.Headers {
-		if e.skipColumn(header) {
+		selected, err := e.columnSelected(sheet, ci)
+		if err != nil {
+			return nil, err
+		}
+		if !selected {
 			continue
 		}
-		name := header
-		if e.opts.Lowercase {
-			name = strings.ToLower(name)
+		name := e.fieldName(header, ci)
+		if seen[name] && e.checkDuplicateKeys(sheet) {
+			return nil, fmt.Errorf("duplicate output field %q after tag filtering (sheet %q)", name, sheet.Name)
 		}
-		if name == "" {
-			name = fmt.Sprintf("col_%d", ci)
-		}
+		seen[name] = true
 		cols = append(cols, CSVColumn{Index: ci, Name: name})
 	}
-	return cols
+	return cols, nil
 }
 
 // CSVColumn describes a single column for the CSV writer.
@@ -145,8 +162,26 @@ type CSVColumn struct {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-// skipSheet returns true when the sheet name starts with any exclude prefix.
-func (e *Engine) skipSheet(name string) bool {
+// skipSheet applies the hard exclusion prefixes and the optional tag filter.
+func (e *Engine) skipSheet(sheet core.Sheet) bool {
+	names := []string{sheet.Name}
+	if sheet.RawName != "" && sheet.RawName != sheet.Name {
+		names = append(names, sheet.RawName)
+	}
+	for _, name := range names {
+		if e.hasExcludedPrefix(name) {
+			return true
+		}
+	}
+	return !core.TagMatches(sheet.Tags, e.opts.Tag)
+}
+
+// skipColumn returns true when a column name starts with any exclude prefix.
+func (e *Engine) skipColumn(header string) bool {
+	return e.hasExcludedPrefix(header)
+}
+
+func (e *Engine) hasExcludedPrefix(name string) bool {
 	for _, p := range e.opts.ExcludePrefixes {
 		if p != "" && strings.HasPrefix(name, p) {
 			return true
@@ -155,10 +190,68 @@ func (e *Engine) skipSheet(name string) bool {
 	return false
 }
 
-// skipColumn returns true when a column name starts with any exclude prefix.
-func (e *Engine) skipColumn(header string) bool {
-	for _, p := range e.opts.ExcludePrefixes {
-		if p != "" && strings.HasPrefix(header, p) {
+func (e *Engine) columnSelected(sheet core.Sheet, ci int) (bool, error) {
+	header := sheet.Headers[ci]
+	if e.skipColumn(header) {
+		return false, nil
+	}
+	tags := columnTags(sheet, ci)
+	if !core.TagMatches(tags, e.opts.Tag) {
+		return false, nil
+	}
+	if e.opts.StrictTags && e.opts.Tag != "" && len(tags) == 0 {
+		return false, fmt.Errorf("column %q has no tags (required by --strict-tags) in sheet %q", header, sheet.Name)
+	}
+	return true, nil
+}
+
+func columnTags(sheet core.Sheet, ci int) []string {
+	if ci >= 0 && ci < len(sheet.ColumnTags) {
+		return sheet.ColumnTags[ci]
+	}
+	return nil
+}
+
+func (e *Engine) fieldName(header string, ci int) string {
+	name := header
+	if e.opts.Lowercase {
+		name = strings.ToLower(name)
+	}
+	if name == "" {
+		name = fmt.Sprintf("col_%d", ci)
+	}
+	return name
+}
+
+func (e *Engine) validateSheetTags(sheet core.Sheet) error {
+	if e.opts.StrictTags && e.opts.Tag != "" && len(sheet.Tags) == 0 {
+		return fmt.Errorf("sheet %q has no tags (required by --strict-tags)", sheet.Name)
+	}
+	return nil
+}
+
+func (e *Engine) hasSelectedColumn(sheet core.Sheet) bool {
+	for ci := range sheet.Headers {
+		if e.skipColumn(sheet.Headers[ci]) {
+			continue
+		}
+		if core.TagMatches(columnTags(sheet, ci), e.opts.Tag) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) checkDuplicateKeys(sheet core.Sheet) bool {
+	return e.opts.Tag != "" || sheetHasTags(sheet)
+}
+
+func sheetHasTags(sheet core.Sheet) bool {
+	if len(sheet.Tags) > 0 {
+		return true
+	}
+	for _, tags := range sheet.ColumnTags {
+		if len(tags) > 0 {
 			return true
 		}
 	}
@@ -183,17 +276,23 @@ func (e *Engine) toDict(sheet core.Sheet) (map[string]any, error) {
 	// Determine key column: --key flag overrides the default (first column).
 	keyName := ""
 	if e.opts.KeyColumn != "" {
-		target, _ := core.SplitFieldMarker(e.opts.KeyColumn)
+		target, _, _ := core.SplitHeader(e.opts.KeyColumn, true)
 		if e.opts.Lowercase {
 			target = strings.ToLower(target)
 		}
-		keyName = ""
-		for _, header := range sheet.Headers {
-			name, _ := core.SplitFieldMarker(header)
+		for ci, header := range sheet.Headers {
+			name := header
 			if e.opts.Lowercase {
 				name = strings.ToLower(name)
 			}
-			if strings.EqualFold(name, target) && !e.skipColumn(header) {
+			if !strings.EqualFold(name, target) {
+				continue
+			}
+			selected, err := e.columnSelected(sheet, ci)
+			if err != nil {
+				return nil, err
+			}
+			if selected {
 				keyName = name
 				break
 			}
@@ -202,12 +301,25 @@ func (e *Engine) toDict(sheet core.Sheet) (map[string]any, error) {
 			return nil, fmt.Errorf("key column %q not found or excluded", e.opts.KeyColumn)
 		}
 	} else if len(sheet.Headers) > 0 {
-		keyName = sheet.Headers[0]
-		if e.opts.Lowercase {
-			keyName = strings.ToLower(keyName)
-		}
-		if e.skipColumn(keyName) {
-			keyName = ""
+		if e.opts.Tag != "" || sheetHasTags(sheet) {
+			for ci, header := range sheet.Headers {
+				selected, err := e.columnSelected(sheet, ci)
+				if err != nil {
+					return nil, err
+				}
+				if selected {
+					keyName = e.fieldName(header, ci)
+					break
+				}
+			}
+		} else {
+			selected, err := e.columnSelected(sheet, 0)
+			if err != nil {
+				return nil, err
+			}
+			if selected {
+				keyName = e.fieldName(sheet.Headers[0], 0)
+			}
 		}
 	}
 

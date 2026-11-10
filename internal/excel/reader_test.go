@@ -369,3 +369,54 @@ func TestBlankRowsKeepRowIndices(t *testing.T) {
 		t.Errorf("rows = %v", sheets[0].Rows)
 	}
 }
+
+func TestLoadTags(t *testing.T) {
+	f := excelize.NewFile()
+	const sheet = "Shop@c"
+	if _, err := f.NewSheet(sheet); err != nil {
+		t.Fatal(err)
+	}
+	rows := [][]any{
+		{"id", "reward@c", "server@s", "common", "name!@c", "optional@c?"},
+		{"int", "int", "int", "int", "string", "string"},
+		{"1", "10", "20", "30", "x", "y"},
+	}
+	for i, r := range rows {
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetSheetRow(sheet, cell, &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "tags.xlsx")
+	if err := f.SaveAs(path); err != nil {
+		t.Fatal(err)
+	}
+
+	sheets, err := Load(path, core.Options{HeaderRow: 0, TypeRow: 1, DataRow: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *core.Sheet
+	for i := range sheets {
+		if sheets[i].RawName == sheet {
+			got = &sheets[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("sheet %q not found: %+v", sheet, sheets)
+	}
+	if got.Name != "Shop" || !reflect.DeepEqual(got.Tags, []string{"c"}) {
+		t.Errorf("sheet name/tags = %q/%v, want Shop/[c]", got.Name, got.Tags)
+	}
+	wantHeaders := []string{"id", "reward", "server", "common", "name", "optional"}
+	if !reflect.DeepEqual(got.Headers, wantHeaders) {
+		t.Errorf("Headers = %v, want %v", got.Headers, wantHeaders)
+	}
+	wantTags := [][]string{nil, {"c"}, {"s"}, nil, {"c"}, {"c"}}
+	if !reflect.DeepEqual(got.ColumnTags, wantTags) {
+		t.Errorf("ColumnTags = %v, want %v", got.ColumnTags, wantTags)
+	}
+	if got.Required[4] == nil || !*got.Required[4] || got.Required[5] == nil || *got.Required[5] {
+		t.Errorf("required markers = %v/%v, want true/false", got.Required[4], got.Required[5])
+	}
+}
