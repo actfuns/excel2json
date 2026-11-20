@@ -73,7 +73,8 @@ excel2json data.xlsx -t 1 --required-by-default
 
 | Short | Long | Default | Description |
 |---|---|---|---|
-| | `inputs...` | **required** | Excel file(s) or directory containing `.xls`/`.xlsx` |
+| | `inputs...` | **required** unless config `inputs` | Excel file(s) or directory containing `.xls`/`.xlsx` |
+| | `--config` | `""` | YAML config file; explicit CLI flags override config |
 | `-o` | `--out` | `""` | Output path (file or directory) |
 | `-f` | `--format` | `json` | Output format: `json` or `csv` |
 | | | **Data parsing** |
@@ -91,7 +92,6 @@ excel2json data.xlsx -t 1 --required-by-default
 | | `--verbose` | `false` | Log skipped sheets/columns/files and reasons to stderr |
 | | `--parse-cell-json` | `false` | Parse JSON strings inside untyped cells |
 | | `--stringify-all` | `false` | Stringify untyped values |
-| | `--types` | `""` | types.yaml / types.yml path (auto-discovered next to the input or in cwd) |
 | | | **Output format** |
 | | `--list` | `false` | Export JSON as a list/array (default: dict keyed by first column) |
 | `-m` | `--merge-sheets` | `false` | Merge all sheets into one file (JSON object or CSV sections) |
@@ -101,6 +101,33 @@ excel2json data.xlsx -t 1 --required-by-default
 | | `--unique-keys` | `false` | Error on duplicate or empty dict keys (default: last wins) |
 
 Row indices (`--header-row`, `--type-row`, `--data-row`) refer to actual 0-based sheet rows. Blank rows are preserved for locating header/type rows and skipped in the data area. `--data-row=-1` uses the row after the header/type rows.
+
+### Configuration file
+
+Use `--config` to load defaults from YAML; explicitly set CLI flags still win. A fully commented example is available at [`config.example.yaml`](config.example.yaml).
+
+```yaml
+version: 1
+inputs:
+  - "./配置表/*.xlsx"
+out: "./dist/client"
+format: json
+header_row: 0
+type_row: 2
+data_row: 3
+list: true
+name_tpl: "{sheet}"
+exclude: ["#"]
+tag: c
+types:
+  itemId: "string:ref(item.id)"
+```
+
+- `inputs` is used only when no positional inputs are given
+- `out`, `inputs`, and a string `types` path are resolved relative to the config file
+- `types` accepts a path, mapping, or `name`/`format` list
+- Unknown config keys are errors
+- If config is absent, `types.yaml`/`types.yml` auto-discovery still works
 
 ---
 
@@ -200,7 +227,7 @@ Set `-t/--type-row` to the row containing type annotations (0-based). Cells are 
 | Category | Types |
 |---|---|
 | Scalars | `bool`, `string`, `int`, `int8`, `int16`, `int32`, `int64`, `uint`, `uint8`, `uint16`, `uint32`, `uint64`, `uintptr`, `float32`, `float64`, `byte`, `rune`, `any`, `interface{}` |
-| Arrays / slices | `[]T`, `[N]T` |
+| Arrays / slices | `[]T`, `[N]T`, `T[]` (alias for `[]T`) |
 | Maps | `map[K]V` |
 | Extras | `date`, `float` (= `float64`), `object` (= `map[string]any`), `list` (= `[]any`), `null` |
 
@@ -239,7 +266,7 @@ when(typeof(kind.a) = int) ...
 - Conditions inside `when(...)` are AND; `;` still separates rules
 - `and(...)`, `or(...)`, `not(...)` can nest; `not(a,b)` means `NOT (a AND b)`
 - `type(...)` is accepted as an alias for `typeof(...)`
-- Type expressions support `[3]int`, `[]T`, `map[K]V`, `[2][2]int`, etc.
+- Type expressions support `[3]int`, `[]T`, `T[]`, `map[K]V`, `[2][2]int`, etc.
 - Raw non-JSON cells are treated as `string`; `TRUE`/`FALSE` are treated as booleans
 - Missing column or invalid JSON when a path is requested is an error; an empty path match means the guard is false; multiple matches use any-match
 
@@ -321,7 +348,7 @@ types:
     format: "int:gt(0),ref(items.id)"
 ```
 
-Use `itemId` / `items` in the type row, just like built-in types; `#itemId` is also accepted. Load order: `--types <path>`, then `types.yaml`/`types.yml` next to the input file, then the current directory. Named types must be the whole annotation; cycles are detected. Names may not collide with built-in types such as `int` or `list`.
+Use `itemId` / `items` in the type row, just like built-in types; `#itemId` is also accepted. Load order: config `types`, then `types.yaml`/`types.yml` next to the input file, then the current directory. Named types must be the whole annotation; cycles are detected. Names may not collide with built-in types such as `int` or `list`.
 
 ---
 
@@ -329,7 +356,7 @@ Use `itemId` / `items` in the type row, just like built-in types; `#itemId` is a
 
 - **Parallel processing**: files are processed concurrently (up to `2 × CPU cores`)
 - **Prefix exclusion**: use `-x` (prefix match) to skip sheets & columns; repeatable
-- **Strong typing**: Go-style types, JSONPath selectors, validators, condition guards, `pad`, `ref`, and `types.yaml` reuse (`-t`, `-r`, `--types`)
+- **Strong typing**: Go-style types, JSONPath selectors, validators, condition guards, `pad`, `ref`, and `types.yaml` reuse (`-t`, `-r`, config `types`)
 - **Smart cell parsing**: JSON strings inside cells are deserialised in-place (`--parse-cell-json`)
 - **Stringify mode**: output untyped columns as raw strings (`--stringify-all`)
 - **Field name lowercasing**: `--lowercase` for case-insensitive consumers

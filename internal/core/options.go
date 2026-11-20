@@ -36,7 +36,7 @@ type Options struct {
 	UniqueKeys  bool   // error on duplicate/empty dict keys
 
 	// Type reuse.
-	TypesPath string            // path to types.yaml/types.yml (auto-discovered if empty)
+	TypesPath string            // explicit types path; auto-discovered if empty
 	TypeDefs  map[string]string // loaded named type definitions
 
 	// Output identity. SourceStem is the input file stem and is used to

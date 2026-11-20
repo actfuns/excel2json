@@ -76,7 +76,7 @@ jobs:
         run: |
           name="${{ matrix.asset-name }}"
           mkdir -p package
-          cp LICENSE README.md README_zh.md package/ 2>/dev/null || true
+          cp LICENSE README.md README_zh.md config.example.yaml package/ 2>/dev/null || true
           suffix="${{ matrix.binary-suffix || '' }}"
           cp "excel2json${suffix}" package/
           cd package

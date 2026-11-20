@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/actfuns/excel2json/internal/config"
 	"github.com/actfuns/excel2json/internal/convert"
 	"github.com/actfuns/excel2json/internal/core"
 	"github.com/actfuns/excel2json/internal/excel"
@@ -35,6 +36,7 @@ func NewCommand(version string) *cobra.Command {
 	var opts core.Options
 	var legacySkipRows int
 	var legacyName string
+	var configPath string
 
 	root := &cobra.Command{
 		Use:           "excel2json [options] <inputs...>",
@@ -43,7 +45,23 @@ func NewCommand(version string) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
+			inputs := args
+			if configPath != "" {
+				cfg, err := config.Load(configPath)
+				if err != nil {
+					return err
+				}
+				if err := applyConfig(cmd, cfg, &opts); err != nil {
+					return err
+				}
+				if len(inputs) == 0 {
+					inputs, err = cfg.ResolveInputs()
+					if err != nil {
+						return err
+					}
+				}
+			}
+			if len(inputs) == 0 {
 				return cmd.Help()
 			}
 			if cmd.Flags().Changed("skip-rows") && !cmd.Flags().Changed("data-row") {
@@ -59,7 +77,7 @@ func NewCommand(version string) *cobra.Command {
 					opts.NameTmpl = "{file}_{sheet}"
 				}
 			}
-			return Run(expandInputs(args), opts)
+			return Run(expandInputs(inputs), opts)
 		},
 	}
 
@@ -91,7 +109,7 @@ func NewCommand(version string) *cobra.Command {
 	root.Flags().BoolVarP(&opts.Pretty, "pretty", "p", false, "pretty-print JSON")
 	root.Flags().StringVarP(&opts.KeyColumn, "key", "k", "", "column name for dict keys (default: first column)")
 	root.Flags().BoolVar(&opts.UniqueKeys, "unique-keys", false, "error on duplicate or empty dict keys")
-	root.Flags().StringVar(&opts.TypesPath, "types", "", "path to types.yaml/types.yml (auto-discovered next to input or in cwd)")
+	root.Flags().StringVar(&configPath, "config", "", "path to YAML configuration file")
 
 	// Deprecated aliases kept for compatibility. They are hidden from help.
 	root.Flags().BoolVar(&opts.ParseCellJSON, "cell-json", false, "deprecated: use --parse-cell-json")
@@ -114,6 +132,82 @@ func NewCommand(version string) *cobra.Command {
 	_ = root.Flags().MarkDeprecated("name", "use --name-tpl instead")
 
 	return root
+}
+
+func flagChanged(cmd *cobra.Command, names ...string) bool {
+	for _, name := range names {
+		if cmd.Flags().Changed(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func applyConfig(cmd *cobra.Command, cfg *config.File, opts *core.Options) error {
+	if cfg.OutputPath != nil && !flagChanged(cmd, "out") {
+		opts.OutputPath = cfg.ResolvePath(*cfg.OutputPath)
+	}
+	if cfg.Format != nil && !flagChanged(cmd, "format") {
+		opts.Format = *cfg.Format
+	}
+	if cfg.Encoding != nil && !flagChanged(cmd, "encoding") {
+		opts.Encoding = *cfg.Encoding
+	}
+	if cfg.HeaderRow != nil && !flagChanged(cmd, "header-row", "name-row") {
+		opts.HeaderRow = *cfg.HeaderRow
+	}
+	if cfg.TypeRow != nil && !flagChanged(cmd, "type-row") {
+		opts.TypeRow = *cfg.TypeRow
+	}
+	if cfg.DataRow != nil && !flagChanged(cmd, "data-row", "skip-rows") {
+		opts.DataRow = *cfg.DataRow
+	}
+	if cfg.DateFormat != nil && !flagChanged(cmd, "date-format") {
+		opts.DateFormat = *cfg.DateFormat
+	}
+	if cfg.ParseCellJSON != nil && !flagChanged(cmd, "parse-cell-json", "cell-json") {
+		opts.ParseCellJSON = *cfg.ParseCellJSON
+	}
+	if cfg.StringifyAll != nil && !flagChanged(cmd, "stringify-all", "all-string") {
+		opts.StringifyAll = *cfg.StringifyAll
+	}
+	if cfg.LowerCase != nil && !flagChanged(cmd, "lowercase", "lowcase") {
+		opts.Lowercase = *cfg.LowerCase
+	}
+	if cfg.ExcludePrefixes != nil && !flagChanged(cmd, "exclude") {
+		opts.ExcludePrefixes = cfg.ExcludePrefixes
+	}
+	if cfg.Tag != nil && !flagChanged(cmd, "tag") {
+		opts.Tag = *cfg.Tag
+	}
+	if cfg.StrictTags != nil && !flagChanged(cmd, "strict-tags") {
+		opts.StrictTags = *cfg.StrictTags
+	}
+	if cfg.Verbose != nil && !flagChanged(cmd, "verbose") {
+		opts.Verbose = *cfg.Verbose
+	}
+	if cfg.RequireByDefault != nil && !flagChanged(cmd, "required-by-default", "required") {
+		opts.RequireByDefault = *cfg.RequireByDefault
+	}
+	if cfg.ListOutput != nil && !flagChanged(cmd, "list", "array") {
+		opts.ListOutput = *cfg.ListOutput
+	}
+	if cfg.MergeSheets != nil && !flagChanged(cmd, "merge-sheets", "merge") {
+		opts.MergeSheets = *cfg.MergeSheets
+	}
+	if cfg.NameTmpl != nil && !flagChanged(cmd, "name-tpl", "name") {
+		opts.NameTmpl = *cfg.NameTmpl
+	}
+	if cfg.Pretty != nil && !flagChanged(cmd, "pretty") {
+		opts.Pretty = *cfg.Pretty
+	}
+	if cfg.KeyColumn != nil && !flagChanged(cmd, "key") {
+		opts.KeyColumn = *cfg.KeyColumn
+	}
+	if cfg.UniqueKeys != nil && !flagChanged(cmd, "unique-keys") {
+		opts.UniqueKeys = *cfg.UniqueKeys
+	}
+	return cfg.ApplyTypes(opts)
 }
 
 // Run processes every input file concurrently.
@@ -261,11 +355,13 @@ type loadedInput struct {
 }
 
 func loadInput(file string, opts core.Options) (loadedInput, error) {
-	defs, err := schema.LoadTypeDefs(file, opts.TypesPath)
-	if err != nil {
-		return loadedInput{}, fmt.Errorf("%s: %w", file, err)
+	if len(opts.TypeDefs) == 0 {
+		defs, err := schema.LoadTypeDefs(file, opts.TypesPath)
+		if err != nil {
+			return loadedInput{}, fmt.Errorf("%s: %w", file, err)
+		}
+		opts.TypeDefs = defs
 	}
-	opts.TypeDefs = defs
 	opts.SourceStem = core.FileStem(file)
 	sheets, err := excel.Load(file, opts)
 	if err != nil {

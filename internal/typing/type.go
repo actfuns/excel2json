@@ -32,7 +32,7 @@ const (
 //
 //	int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr
 //	float32 float64 bool string any
-//	[]T  [N]T  map[K]V
+//	[]T  [N]T  map[K]V  T[] (alias for []T)
 //	额外支持: date（日期）, float（float64 别名）, object（map[string]any 别名）, list（[]any 别名）, null
 type Type struct {
 	Kind   Kind
@@ -101,7 +101,15 @@ func Parse(s string) (*Type, error) {
 }
 
 func (p *typeParser) parse() (*Type, error) {
-	return p.parsePrimary()
+	t, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+	for strings.HasPrefix(p.s[p.pos:], "[]") {
+		p.pos += 2
+		t = &Type{Kind: KindSlice, Elem: t}
+	}
+	return t, nil
 }
 
 func (p *typeParser) parsePrimary() (*Type, error) {

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -896,4 +897,99 @@ func TestRunVerboseSkipReasons(t *testing.T) {
 	if !strings.Contains(stderr, "tag \"c\" not matched") {
 		t.Errorf("stderr = %q, want tag skip reason", stderr)
 	}
+}
+
+func TestConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	workbook := makeSheetWorkbook(t, "Shop",
+		[]string{"id"},
+		[]string{"itemId"},
+		[]string{"5"},
+	)
+	out := filepath.Join(dir, "out")
+	cfg := fmt.Sprintf(`inputs:
+  - %q
+out: %q
+format: json
+header_row: 0
+type_row: 1
+data_row: 2
+list: true
+name_tpl: "{sheet}"
+types:
+  itemId: "int:gt(0)"
+`, filepath.ToSlash(workbook), filepath.ToSlash(out)+"/")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewCommand("test")
+	if root.Flags().Lookup("types") != nil {
+		t.Error("--types should be removed")
+	}
+	root.SetArgs([]string{"--config", cfgPath})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.json"), `[{"id":5}]`)
+}
+
+func TestConfigCLIOverride(t *testing.T) {
+	dir := t.TempDir()
+	workbook := makeTaggedWorkbook(t)
+	out := filepath.Join(dir, "out")
+	cfg := fmt.Sprintf(`inputs:
+  - %q
+out: %q
+format: json
+header_row: 0
+type_row: 1
+data_row: 2
+list: true
+name_tpl: "{sheet}"
+tag: s
+`, filepath.ToSlash(workbook), filepath.ToSlash(out)+"/")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewCommand("test")
+	root.SetArgs([]string{"--config", cfgPath, "--tag", "c"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.json"), `[{"common":30,"id":1,"reward":10}]`)
+}
+
+func TestConfigInputsIgnoredWhenCLIInputsProvided(t *testing.T) {
+	dir := t.TempDir()
+	workbook := makeSheetWorkbook(t, "Shop",
+		[]string{"id"},
+		[]string{"int"},
+		[]string{"1"},
+	)
+	out := filepath.Join(dir, "out")
+	cfg := fmt.Sprintf(`inputs:
+  - missing.xlsx
+out: %q
+format: json
+header_row: 0
+type_row: 1
+data_row: 2
+list: true
+name_tpl: "{sheet}"
+`, filepath.ToSlash(out)+"/")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewCommand("test")
+	root.SetArgs([]string{"--config", cfgPath, workbook})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(out, "Shop.json"), `[{"id":1}]`)
 }

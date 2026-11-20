@@ -297,9 +297,9 @@ func CompareValue(v any, op CondOp, literal string) (bool, error) {
 		return equal, nil
 	}
 
-	switch v.(type) {
+	switch v := v.(type) {
 	case string:
-		cmp := strings.Compare(v.(string), ArgLiteral(literal))
+		cmp := strings.Compare(v, ArgLiteral(literal))
 		return cmpOp(cmp, op), nil
 	default:
 		cmp, err := compareNumericArg(v, literal)

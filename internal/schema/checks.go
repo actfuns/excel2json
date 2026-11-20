@@ -261,11 +261,12 @@ func (r *Runner) runCheck(v any, ch *Check) error {
 			return fmt.Errorf("%s: %w", ch.Name, err)
 		}
 		ok := cmp > 0
-		if ch.Name == "gte" {
+		switch ch.Name {
+		case "gte":
 			ok = cmp >= 0
-		} else if ch.Name == "lt" {
+		case "lt":
 			ok = cmp < 0
-		} else if ch.Name == "lte" {
+		case "lte":
 			ok = cmp <= 0
 		}
 		if !ok {
@@ -303,9 +304,10 @@ func (r *Runner) runCheck(v any, ch *Check) error {
 			return fmt.Errorf("%s: %w", ch.Name, err)
 		}
 		ok := cmp != 0
-		if ch.Name == "positive" {
+		switch ch.Name {
+		case "positive":
 			ok = cmp > 0
-		} else if ch.Name == "negative" {
+		case "negative":
 			ok = cmp < 0
 		}
 		if !ok {

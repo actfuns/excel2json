@@ -72,6 +72,14 @@ func TestParseAnnotationGuards(t *testing.T) {
 		t.Errorf("column path guard = %+v", g)
 	}
 
+	spec, err = Parse(`when(typeof($) = int[]) int`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Rules[0].Guards[0].TypeExpr.String(); got != "[]int" {
+		t.Errorf("int[] guard type = %q, want []int", got)
+	}
+
 	spec, err = Parse(`when(typeof($) != null) int`, nil)
 	if err != nil {
 		t.Fatal(err)

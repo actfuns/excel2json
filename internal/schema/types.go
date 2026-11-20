@@ -39,7 +39,7 @@ type cachedTypeDefs struct {
 var typeDefsCache sync.Map // absolute path -> cachedTypeDefs
 
 // LoadTypeDefs resolves and loads the type dictionary for one input file.
-// An explicit --types path wins; otherwise types.yaml/types.yml are looked up
+// An explicit types path wins; otherwise types.yaml/types.yml are looked up
 // next to the input file and then in the current working directory.
 func LoadTypeDefs(inputFile, explicit string) (map[string]string, error) {
 	path, err := resolveTypesPath(inputFile, explicit)
@@ -95,6 +95,11 @@ func readTypeDefs(path string) (map[string]string, error) {
 		return nil, fmt.Errorf("read types file %s: %w", path, err)
 	}
 	return parseYAMLTypeDefs(path, data)
+}
+
+// ParseTypeDefs parses named type definitions from YAML data.
+func ParseTypeDefs(source string, data []byte) (map[string]string, error) {
+	return parseYAMLTypeDefs(source, data)
 }
 
 func parseYAMLTypeDefs(path string, data []byte) (map[string]string, error) {

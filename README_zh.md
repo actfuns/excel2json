@@ -71,7 +71,8 @@ excel2json data.xlsx -t 1 --required-by-default
 
 | 短 | 长 | 默认值 | 说明 |
 |---|---|---|---|
-| | `inputs...` | **必填** | Excel 文件或目录 |
+| | `inputs...` | 可用 config `inputs` 代替 | Excel 文件或目录 |
+| | `--config` | `""` | YAML 配置文件；命令行显式参数优先 |
 | `-o` | `--out` | `""` | 输出路径（文件或目录） |
 | `-f` | `--format` | `json` | 输出格式：`json` 或 `csv` |
 | | | **数据解析** |
@@ -89,7 +90,6 @@ excel2json data.xlsx -t 1 --required-by-default
 | | `--verbose` | `false` | 把跳过的 sheet/列/文件及原因输出到 stderr |
 | | `--parse-cell-json` | `false` | 解析无类型列单元格中的 JSON 字符串 |
 | | `--stringify-all` | `false` | 无类型列全部输出为字符串 |
-| | `--types` | `""` | types.yaml / types.yml 路径（省略时自动查找） |
 | | | **输出格式** |
 | | `--list` | `false` | JSON 导出为数组（默认以第一列值为 key） |
 | `-m` | `--merge-sheets` | `false` | 合并所有 sheet 到一个文件（JSON 对象或 CSV 分段） |
@@ -99,6 +99,33 @@ excel2json data.xlsx -t 1 --required-by-default
 | | `--unique-keys` | `false` | 字典 key 重复或为空时报错（默认后者覆盖前者） |
 
 行号参数（`--header-row`、`--type-row`、`--data-row`）按 Excel 实际行号计算（0 开始）。中间空行会保留用于定位表头/类型行，数据区空行会跳过。`--data-row=-1` 表示取表头/类型行之后的第一行。
+
+### 配置文件
+
+使用 `--config` 读取 YAML 默认配置；命令行显式参数仍然优先。完整带注释示例见 [`config.example.yaml`](config.example.yaml)。
+
+```yaml
+version: 1
+inputs:
+  - "./配置表/*.xlsx"
+out: "./dist/client"
+format: json
+header_row: 0
+type_row: 2
+data_row: 3
+list: true
+name_tpl: "{sheet}"
+exclude: ["#"]
+tag: c
+types:
+  itemId: "string:ref(item.id)"
+```
+
+- 只有命令行没有 positional inputs 时才使用 config 的 `inputs`
+- `out`、`inputs`、字符串形式的 `types` 路径相对 config 文件解析
+- `types` 支持路径、映射、`name`/`format` 列表三种形式
+- 未知配置字段会报错
+- 没有 config 时仍会按原逻辑自动查找 `types.yaml`/`types.yml`
 
 ---
 
@@ -200,7 +227,7 @@ excel2json --tag s -x '#' data.xlsx -o dist/server/
 | 分类 | 类型 |
 |---|---|
 | 基础类型 | `bool`、`string`、`int`、`int8`、`int16`、`int32`、`int64`、`uint`、`uint8`、`uint16`、`uint32`、`uint64`、`uintptr`、`float32`、`float64`、`byte`、`rune`、`any`、`interface{}` |
-| 数组 / 切片 | `[]T`、`[N]T` |
+| 数组 / 切片 | `[]T`、`[N]T`、`T[]`（等价于 `[]T`） |
 | Map | `map[K]V` |
 | 额外别名 | `date`、`float`（= `float64`）、`object`（= `map[string]any`）、`list`（= `[]any`）、`null` |
 
@@ -239,7 +266,7 @@ when(typeof(kind.a) = int) ...
 - `when(...)` 内逗号 = AND；`;` 仍然分隔规则
 - `and(...)`、`or(...)`、`not(...)` 可嵌套；`not(a,b)` = `NOT(a AND b)`
 - `type(...)` 是 `typeof(...)` 的别名
-- 类型表达式支持 `[3]int`、`[]T`、`map[K]V`、`[2][2]int` 等
+- 类型表达式支持 `[3]int`、`[]T`、`T[]`、`map[K]V`、`[2][2]int` 等
 - 原始单元格不是合法 JSON 时按 `string` 处理；`TRUE`/`FALSE` 识别为布尔值
 - 列不存在或需要 JSON 但内容非法时返回错误；路径无匹配表示条件不成立；多匹配时任意一个满足即可
 
@@ -359,7 +386,7 @@ types:
 
 类型行直接写 `itemId` / `items` 即可，和内置类型一样使用；`#itemId` 也兼容。加载顺序：
 
-1. `--types <path>` 显式指定
+1. config 的 `types`
 2. 输入文件同目录的 `types.yaml` / `types.yml`
 3. 当前目录的 `types.yaml` / `types.yml`
 
@@ -371,7 +398,7 @@ types:
 
 - **并行处理**：文件并发处理（上限 `2 × CPU 核心数`）
 - **前缀排除**：使用 `-x`（前缀匹配）跳过 sheet 和列；可重复使用
-- **强类型注解**：Go 风格类型、JSONPath 选择器、校验器、条件守卫、`pad`、`ref`、`types.yaml` 复用（`-t`、`-r`、`--types`）
+- **强类型注解**：Go 风格类型、JSONPath 选择器、校验器、条件守卫、`pad`、`ref`、`types.yaml` 复用（`-t`、`-r`、config `types`）
 - **智能单元格解析**：单元格中的 JSON 字符串自动反序列化（`--parse-cell-json`）
 - **全字符串模式**：无类型列输出原始字符串（`--stringify-all`）
 - **字段名小写**：`-l` 转小写
